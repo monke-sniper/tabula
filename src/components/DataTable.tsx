@@ -4,7 +4,7 @@ import { useApp } from '../lib/context'
 export default function DataTable() {
   const { uploadData } = useApp()
   const [page, setPage] = useState(0)
-  const rowsPerPage = 15
+  const rowsPerPage = 20
 
   if (!uploadData) return null
 
@@ -14,33 +14,36 @@ export default function DataTable() {
   const columns = uploadData.column_names
 
   return (
-    <div className="card overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <span className="text-xs text-muted">Data Preview ({preview.length} rows shown)</span>
-        <div className="flex gap-1">
+    <div className="terminal-panel">
+      <div className="terminal-header">
+        <span className="active">Data Preview</span>
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setPage(p => Math.max(0, p - 1))}
             disabled={page === 0}
-            className="btn-ghost text-xs px-2 py-1"
+            className="btn-terminal py-0.5 px-1.5 text-[9px]"
           >
-            &laquo;
+            ‹
           </button>
-          <span className="text-xs text-muted px-2 py-1">{page + 1}/{totalPages}</span>
+          <span className="font-mono text-[10px] text-[var(--text-muted)]">{page + 1}/{totalPages}</span>
           <button
             onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
             disabled={page >= totalPages - 1}
-            className="btn-ghost text-xs px-2 py-1"
+            className="btn-terminal py-0.5 px-1.5 text-[9px]"
           >
-            &raquo;
+            ›
           </button>
         </div>
       </div>
-      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-card z-10">
+      <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-[var(--bg-secondary)] z-10">
             <tr>
               {columns.map(col => (
-                <th key={col} className="px-3 py-2 text-left text-muted font-medium border-b border-border whitespace-nowrap">
+                <th
+                  key={col}
+                  className="px-3 py-1.5 text-left font-mono text-[9px] font-semibold tracking-[0.06em] uppercase text-[var(--text-muted)] border-b border-[var(--border-subtle)] whitespace-nowrap"
+                >
                   {col}
                 </th>
               ))}
@@ -48,9 +51,9 @@ export default function DataTable() {
           </thead>
           <tbody>
             {visibleRows.map((row, i) => (
-              <tr key={i} className="border-b border-border/50 hover:bg-border/20 transition-colors">
+              <tr key={i} className="border-b border-[var(--border-subtle)]/50 hover:bg-[var(--bg-tertiary)]/50 transition-colors">
                 {columns.map(col => (
-                  <td key={col} className="px-3 py-1.5 font-mono whitespace-nowrap text-text/80">
+                  <td key={col} className="px-3 py-1 font-mono text-[11px] whitespace-nowrap text-[var(--text-secondary)] tabular-nums">
                     {formatCell(row[col])}
                   </td>
                 ))}
@@ -64,8 +67,8 @@ export default function DataTable() {
 }
 
 function formatCell(val: unknown): string {
-  if (val === null || val === undefined) return '-'
-  if (typeof val === 'number') return val % 1 === 0 ? val.toLocaleString() : val.toFixed(4)
-  if (typeof val === 'string' && val.length > 40) return val.slice(0, 37) + '...'
+  if (val === null || val === undefined) return '—'
+  if (typeof val === 'number') return val % 1 === 0 ? val.toLocaleString() : val.toFixed(2)
+  if (typeof val === 'string' && val.length > 32) return val.slice(0, 29) + '…'
   return String(val)
 }

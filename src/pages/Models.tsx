@@ -7,100 +7,91 @@ export default function Models() {
   const { activeModel, setActiveModel, models, setModels } = useApp()
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    loadModels()
-  }, [])
+  useEffect(() => { loadModels() }, [])
 
   const loadModels = async () => {
     try {
       const result = await apiFetch<{ models: ModelInfo[]; active: string }>('/models')
       setModels(result.models)
       setActiveModel(result.active)
-    } catch {
-      // Models endpoint might not have any models yet
-    } finally {
-      setLoading(false)
-    }
+    } catch {} finally { setLoading(false) }
   }
 
-  const selectModel = async (modelName: string) => {
+  const selectModel = async (name: string) => {
     try {
-      await apiFetch('/models/active', {
-        method: 'PUT',
-        body: JSON.stringify({ model: modelName }),
-      })
-      setActiveModel(modelName)
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to set model')
-    }
+      await apiFetch('/models/active', { method: 'PUT', body: JSON.stringify({ model: name }) })
+      setActiveModel(name)
+    } catch (err: unknown) { alert(err instanceof Error ? err.message : 'Failed') }
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
-      <div>
-        <h2 className="text-xl font-bold text-text">Models</h2>
-        <p className="text-sm text-muted mt-1">Manage your models and select the active one</p>
+    <div className="h-full overflow-y-auto">
+      <div className="h-[42px] flex items-center justify-between px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)] shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-[13px] font-bold tracking-wide text-[var(--text-primary)]">Models</h1>
+          <span className="font-mono text-[9px] text-[var(--text-muted)]">Registry & Selection</span>
+        </div>
+        <button onClick={loadModels} className="btn-terminal py-1">Refresh</button>
       </div>
 
-      <div className="card p-5">
-        <h3 className="text-sm font-medium text-accent mb-3">Active Model</h3>
-        <div className="bg-bg border border-border rounded-md px-4 py-3 font-mono text-sm">
-          {activeModel}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium text-text">Available Models</h3>
-          <button onClick={loadModels} className="btn-ghost text-xs">
-            Refresh
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="p-8 text-center text-muted text-sm">Loading models...</div>
-        ) : !models.length ? (
-          <div className="p-8 text-center text-muted text-sm">
-            No custom models yet. Fine-tune a model on the Dashboard to get started.
+      <div className="p-4 max-w-3xl space-y-4">
+        {/* Active model */}
+        <div className="terminal-panel">
+          <div className="terminal-header">
+            <span className="active">Active Model</span>
           </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {models.map(model => (
-              <div
-                key={model.name}
-                className={`px-5 py-4 flex items-center justify-between transition-colors ${
-                  model.name === activeModel ? 'bg-accent/5' : 'hover:bg-border/30'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-text">{model.name}</span>
-                    {model.name === activeModel && (
-                      <span className="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded-full">Active</span>
+          <div className="p-3">
+            <div className="font-mono text-[12px] text-[var(--accent-cyan)] bg-[var(--bg-primary)] rounded px-3 py-2 border border-[var(--border-subtle)]">
+              {activeModel}
+            </div>
+          </div>
+        </div>
+
+        {/* Model list */}
+        <div className="terminal-panel">
+          <div className="terminal-header">
+            <span className="active">Available Models</span>
+            <span className="font-mono text-[10px] text-[var(--text-muted)]">{models.length} registered</span>
+          </div>
+          {loading ? (
+            <div className="p-8 text-center font-mono text-[11px] text-[var(--text-muted)]">Loading...</div>
+          ) : !models.length ? (
+            <div className="p-8 text-center">
+              <div className="font-mono text-[11px] text-[var(--text-muted)]">No custom models</div>
+              <div className="font-mono text-[10px] text-[var(--text-muted)] mt-1">Fine-tune a model to register it here</div>
+            </div>
+          ) : (
+            <div>
+              {models.map(model => (
+                <div
+                  key={model.name}
+                  className={`px-4 py-3 flex items-center justify-between border-b border-[var(--border-subtle)]/50 transition-colors ${
+                    model.name === activeModel ? 'bg-[var(--accent-cyan-dim)]' : 'hover:bg-[var(--bg-tertiary)]/50'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] font-medium text-[var(--text-primary)]">{model.name}</span>
+                      {model.name === activeModel && <div className="tag tag-cyan">Active</div>}
+                    </div>
+                    <div className="font-mono text-[9px] text-[var(--text-muted)] mt-1">
+                      Base: {model.base_model} · {new Date(model.created_at).toLocaleDateString()}
+                    </div>
+                    {model.metrics && (
+                      <div className="font-mono text-[9px] text-[var(--text-muted)] mt-0.5">
+                        Loss: {model.metrics.loss?.toFixed(4) ?? '—'}
+                        {model.metrics.eval_loss && ` · Eval: ${model.metrics.eval_loss.toFixed(4)}`}
+                      </div>
                     )}
                   </div>
-                  <div className="text-xs text-muted mt-1">
-                    Base: {model.base_model} &middot; Created: {new Date(model.created_at).toLocaleDateString()}
-                  </div>
-                  {model.metrics && (
-                    <div className="text-xs text-muted mt-1 font-mono">
-                      {model.metrics.loss && `Loss: ${model.metrics.loss.toFixed(4)}`}
-                      {model.metrics.eval_loss && ` | Eval: ${model.metrics.eval_loss.toFixed(4)}`}
-                    </div>
+                  {model.name !== activeModel && (
+                    <button onClick={() => selectModel(model.name)} className="btn-terminal">Select</button>
                   )}
                 </div>
-                {model.name !== activeModel && (
-                  <button
-                    onClick={() => selectModel(model.name)}
-                    className="btn-ghost text-xs text-accent"
-                  >
-                    Select
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
