@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-electron/
+*.pyc
+__pycache__/
+sessions/
+models/*.pt
+models/registry.json
+.env
+.vite/
+*.log
+.DS_Store
+Thumbs.db
