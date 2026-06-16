@@ -178,8 +178,8 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
       y: [...forecast.map(r => r.upper_90), ...[...forecast].reverse().map(r => r.lower_10)],
       type: 'scatter',
       fill: 'toself',
-      fillcolor: 'rgba(0, 188, 212, 0.06)',
-      line: { color: 'rgba(0, 188, 212, 0.2)', width: 1 },
+      fillcolor: 'rgba(0, 188, 212, 0.10)',
+      line: { color: 'rgba(0, 188, 212, 0.30)', width: 1 },
       name: '80% CI',
       hoverinfo: 'skip',
     })
@@ -189,20 +189,21 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
       y: [...forecast.map(r => r.upper_75), ...[...forecast].reverse().map(r => r.lower_25)],
       type: 'scatter',
       fill: 'toself',
-      fillcolor: 'rgba(0, 188, 212, 0.12)',
-      line: { color: 'rgba(0, 188, 212, 0.35)', width: 1 },
+      fillcolor: 'rgba(0, 188, 212, 0.18)',
+      line: { color: 'rgba(0, 188, 212, 0.50)', width: 1 },
       name: '50% CI',
       hoverinfo: 'skip',
     })
 
     for (const { idx, score } of [...ranked].reverse()) {
-      const opacity = 0.06 + 0.9 * (1 - score / maxScore)
+      const opacity = 0.08 + 0.85 * (1 - score / maxScore)
       traces.push({
         x: forecast.map(r => r.timestamp),
         y: forecast.map(r => r.iteration_values[idx]),
         type: 'scatter',
-        mode: 'lines',
-        line: { color: `rgba(255, 136, 0, ${opacity})`, width: 0.7, dash: 'dash' },
+        mode: 'lines+markers',
+        line: { color: `rgba(255, 136, 0, ${opacity})`, width: 1, dash: 'dash' },
+        marker: { size: 2, color: `rgba(255, 136, 0, ${opacity})` },
         showlegend: false,
         hoverinfo: 'skip',
       })
@@ -212,9 +213,10 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
       x: forecast.map(r => r.timestamp),
       y: forecast.map(r => r.median),
       type: 'scatter',
-      mode: 'lines',
+      mode: 'lines+markers',
       name: 'Median',
-      line: { color: '#ff8800', width: 2, dash: 'dash' },
+      line: { color: '#ff8800', width: 2.5, dash: 'dash' },
+      marker: { size: 4, color: '#ff8800', symbol: 'circle' },
       hovertemplate: '%{x}<br>Median: %{y:.2f}<extra></extra>',
     })
 
