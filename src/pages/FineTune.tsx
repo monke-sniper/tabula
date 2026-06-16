@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiFetch } from '../lib/api'
 import { useApp } from '../lib/context'
 import type { FineTuneConfig, FineTuneStatus } from '../lib/types'
@@ -29,19 +29,19 @@ export default function FineTune() {
     status: 'idle', progress: 0, current_epoch: 0, total_epochs: 0,
     train_loss: 0, eval_loss: 0, message: '',
   })
-  const [pollInterval, setPollInterval] = useState<ReturnType<typeof setInterval> | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const pollStatus = useCallback(async () => {
     try {
       const s = await apiFetch<FineTuneStatus>('/finetune/status')
       setStatus(s)
       if (s.status === 'completed' || s.status === 'error') {
-        if (pollInterval) { clearInterval(pollInterval); setPollInterval(null) }
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
       }
     } catch {}
-  }, [pollInterval])
+  }, [])
 
-  useEffect(() => () => { if (pollInterval) clearInterval(pollInterval) }, [pollInterval])
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const startTraining = async () => {
     if (!sessionId || !config.custom_name.trim()) return
@@ -51,99 +51,102 @@ export default function FineTune() {
         method: 'POST',
         body: JSON.stringify({ session_id: sessionId, ...config }),
       })
-      setInterval(setInterval(pollStatus, 2000))
+      pollRef.current = setInterval(pollStatus, 2000)
     } catch (err: unknown) {
       setStatus(prev => ({ ...prev, status: 'error', message: err instanceof Error ? err.message : 'Failed' }))
     }
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="h-[42px] flex items-center px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)] shrink-0">
-        <h1 className="text-[13px] font-bold tracking-wide text-[var(--text-primary)]">Fine-Tune</h1>
-        <span className="ml-3 font-mono text-[9px] text-[var(--text-muted)]">Train custom models via HuggingFace Trainer</span>
+    <div className="h-full flex flex-col">
+      {/* Top bar */}
+      <div className="h-[26px] flex items-center px-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
+        <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-[var(--amber)]">Fine-Tune</span>
+        <span className="ml-3 font-mono text-[8px] text-[var(--grey)]">TRAIN CUSTOM MODELS VIA PYTORCH</span>
       </div>
 
-      <div className="p-4 max-w-3xl space-y-4">
+      <div className="flex-1 overflow-y-auto p-3 max-w-3xl space-y-3">
         {!uploadData && (
-          <div className="terminal-panel p-6 text-center">
-            <div className="tag tag-warning inline-block mb-2">No Data</div>
-            <div className="font-mono text-[11px] text-[var(--text-muted)]">Upload data on Dashboard first</div>
+          <div className="blz-panel p-4 text-center">
+            <span className="blz-tag blz-tag-red">NO DATA</span>
+            <div className="font-mono text-[9px] text-[var(--grey)] mt-1">UPLOAD DATA ON DASHBOARD FIRST</div>
           </div>
         )}
 
-        <div className="terminal-panel">
-          <div className="terminal-header">
-            <span className="active">Configuration</span>
+        {/* Config */}
+        <div className="blz-panel">
+          <div className="blz-header">
+            <span className="title">CONFIGURATION</span>
           </div>
-          <div className="p-4 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="block font-mono text-[8px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">Base Model</label>
-                <select className="select-terminal w-full" value={config.model_name} onChange={e => setConfig(c => ({ ...c, model_name: e.target.value }))}>
+          <div className="p-3 space-y-3 border-t border-[var(--border)]">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-0.5">
+                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">BASE MODEL</label>
+                <select className="blz-select w-full" value={config.model_name} onChange={e => setConfig(c => ({ ...c, model_name: e.target.value }))}>
                   {BASE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
-              <div className="space-y-1">
-                <label className="block font-mono text-[8px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">Custom Name</label>
-                <input className="input-terminal w-full" placeholder="my-model" value={config.custom_name} onChange={e => setConfig(c => ({ ...c, custom_name: e.target.value }))} />
+              <div className="space-y-0.5">
+                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">CUSTOM NAME</label>
+                <input className="blz-input w-full" placeholder="my-model" value={config.custom_name} onChange={e => setConfig(c => ({ ...c, custom_name: e.target.value }))} />
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <ParamInput label="Learning Rate" value={config.learning_rate} step={0.00001} onChange={v => setConfig(c => ({ ...c, learning_rate: v }))} />
-              <ParamInput label="Epochs" value={config.num_epochs} step={1} min={1} max={50} onChange={v => setConfig(c => ({ ...c, num_epochs: v }))} />
-              <ParamInput label="Batch Size" value={config.batch_size} step={1} min={1} max={64} onChange={v => setConfig(c => ({ ...c, batch_size: v }))} />
-              <ParamInput label="Warmup Steps" value={config.warmup_steps} step={10} min={0} onChange={v => setConfig(c => ({ ...c, warmup_steps: v }))} />
-              <ParamInput label="Weight Decay" value={config.weight_decay} step={0.001} onChange={v => setConfig(c => ({ ...c, weight_decay: v }))} />
-              <div className="space-y-1">
-                <label className="block font-mono text-[8px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">
-                  Train Split <span className="text-[var(--accent-cyan)]">{config.train_split}</span>
+            <div className="grid grid-cols-3 gap-2">
+              <ParamInput label="LR" value={config.learning_rate} step={0.00001} onChange={v => setConfig(c => ({ ...c, learning_rate: v }))} />
+              <ParamInput label="EPOCHS" value={config.num_epochs} step={1} min={1} max={50} onChange={v => setConfig(c => ({ ...c, num_epochs: v }))} />
+              <ParamInput label="BATCH" value={config.batch_size} step={1} min={1} max={64} onChange={v => setConfig(c => ({ ...c, batch_size: v }))} />
+              <ParamInput label="WARMUP" value={config.warmup_steps} step={10} min={0} onChange={v => setConfig(c => ({ ...c, warmup_steps: v }))} />
+              <ParamInput label="DECAY" value={config.weight_decay} step={0.001} onChange={v => setConfig(c => ({ ...c, weight_decay: v }))} />
+              <div className="space-y-0.5">
+                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">
+                  SPLIT <span className="text-[var(--amber)]">{config.train_split}</span>
                 </label>
-                <input type="range" className="w-full accent-[var(--accent-cyan)]" min={0.5} max={0.95} step={0.05} value={config.train_split} onChange={e => setConfig(c => ({ ...c, train_split: Number(e.target.value) }))} />
+                <input type="range" className="w-full accent-[var(--amber)]" min={0.5} max={0.95} step={0.05} value={config.train_split} onChange={e => setConfig(c => ({ ...c, train_split: Number(e.target.value) }))} />
               </div>
             </div>
 
-            <button onClick={startTraining} disabled={!uploadData || status.status === 'training'} className="btn-terminal primary w-full py-2.5">
-              {status.status === 'training' ? 'Training...' : 'Start Training'}
+            <button onClick={startTraining} disabled={!uploadData || status.status === 'training'} className="blz-btn primary w-full py-1.5">
+              {status.status === 'training' ? 'TRAINING...' : 'START TRAINING'}
             </button>
           </div>
         </div>
 
+        {/* Status */}
         {status.status !== 'idle' && (
-          <div className="terminal-panel">
-            <div className="terminal-header">
+          <div className="blz-panel">
+            <div className="blz-header">
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${
-                  status.status === 'training' ? 'bg-[var(--accent-cyan)] animate-pulse' :
-                  status.status === 'completed' ? 'bg-[var(--up)]' : 'bg-[var(--down)]'
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  status.status === 'training' ? 'bg-[var(--amber)] blink' :
+                  status.status === 'completed' ? 'bg-[var(--green)]' : 'bg-[var(--red)]'
                 }`} />
-                <span className="active capitalize">{status.status}</span>
+                <span className="title uppercase">{status.status}</span>
               </div>
               {status.status === 'training' && (
-                <span className="font-mono text-[10px] text-[var(--text-muted)]">
-                  Epoch {status.current_epoch}/{status.total_epochs} · {status.progress.toFixed(0)}%
+                <span className="meta font-mono">
+                  EPOCH {status.current_epoch}/{status.total_epochs} · {status.progress.toFixed(0)}%
                 </span>
               )}
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-3 space-y-2 border-t border-[var(--border)]">
               {status.status === 'training' && (
-                <div className="w-full bg-[var(--bg-primary)] rounded-full h-1.5">
-                  <div className="bg-[var(--accent-cyan)] h-1.5 rounded-full transition-all duration-500" style={{ width: `${status.progress}%` }} />
+                <div className="w-full bg-[var(--bg-primary)] h-1">
+                  <div className="bg-[var(--amber)] h-1 transition-all duration-500" style={{ width: `${status.progress}%` }} />
                 </div>
               )}
-              <div className="flex gap-6">
-                <div className="font-mono text-[10px]">
-                  <span className="text-[var(--text-muted)]">Train Loss: </span>
-                  <span className="text-[var(--text-primary)]">{status.train_loss?.toFixed(4) ?? '—'}</span>
+              <div className="flex gap-4">
+                <div className="font-mono text-[9px]">
+                  <span className="text-[var(--grey)]">TRAIN: </span>
+                  <span className="text-[var(--white)]">{status.train_loss?.toFixed(4) ?? '—'}</span>
                 </div>
-                <div className="font-mono text-[10px]">
-                  <span className="text-[var(--text-muted)]">Eval Loss: </span>
-                  <span className="text-[var(--text-primary)]">{status.eval_loss?.toFixed(4) ?? '—'}</span>
+                <div className="font-mono text-[9px]">
+                  <span className="text-[var(--grey)]">EVAL: </span>
+                  <span className="text-[var(--white)]">{status.eval_loss?.toFixed(4) ?? '—'}</span>
                 </div>
               </div>
               {status.message && (
-                <div className="font-mono text-[10px] text-[var(--text-muted)] bg-[var(--bg-primary)] rounded px-3 py-2 border border-[var(--border-subtle)]">{status.message}</div>
+                <div className="font-mono text-[9px] text-[var(--grey)] bg-[var(--bg-primary)] px-2 py-1 border border-[var(--border)]">{status.message}</div>
               )}
             </div>
           </div>
@@ -157,17 +160,9 @@ function ParamInput({ label, value, step, min, max, onChange }: {
   label: string; value: number; step: number; min?: number; max?: number; onChange: (v: number) => void
 }) {
   return (
-    <div className="space-y-1">
-      <label className="block font-mono text-[8px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">{label}</label>
-      <input
-        type="number"
-        className="input-terminal w-full"
-        value={value}
-        step={step}
-        min={min}
-        max={max}
-        onChange={e => onChange(Number(e.target.value))}
-      />
+    <div className="space-y-0.5">
+      <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">{label}</label>
+      <input type="number" className="blz-input w-full" value={value} step={step} min={min} max={max} onChange={e => onChange(Number(e.target.value))} />
     </div>
   )
 }

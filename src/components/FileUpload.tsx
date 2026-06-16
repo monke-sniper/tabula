@@ -50,28 +50,28 @@ export default function FileUpload() {
 
   if (uploadData) {
     return (
-      <div className="terminal-panel">
-        <div className="terminal-header">
+      <div className="blz-panel">
+        <div className="blz-header">
           <div className="flex items-center gap-2">
-            <div className="tag tag-up">Loaded</div>
-            <span className="text-[var(--text-primary)] normal-case tracking-normal font-semibold text-[11px]">{uploadData.filename}</span>
+            <span className="blz-tag blz-tag-green">LOADED</span>
+            <span className="text-[var(--white)] normal-case tracking-normal font-semibold text-[10px]">{uploadData.filename}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="font-mono text-[10px] text-[var(--text-muted)]">
+            <span className="font-mono text-[9px] text-[var(--grey)]">
               {uploadData.rows.toLocaleString()} rows × {uploadData.columns} cols
             </span>
             <button
               onClick={() => { setUploadData(null); setSessionId(null); setEDAStats(null) }}
-              className="text-[10px] text-[var(--down)] hover:text-[var(--down)] font-semibold uppercase tracking-wider"
+              className="text-[9px] text-[var(--red)] hover:text-[var(--red)] font-bold uppercase tracking-wider"
             >
-              Clear
+              CLR
             </button>
           </div>
         </div>
-        <div className="px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="px-2 py-1 flex flex-wrap gap-x-3 gap-y-0.5 border-t border-[var(--border)]">
           {uploadData.numeric_columns.map(col => (
-            <span key={col} className="font-mono text-[10px] text-[var(--text-muted)]">
-              <span className="text-[var(--text-secondary)]">{col}</span>
+            <span key={col} className="font-mono text-[9px]">
+              <span className="text-[var(--amber)]">{col}</span>
             </span>
           ))}
         </div>
@@ -81,11 +81,11 @@ export default function FileUpload() {
 
   return (
     <div
-      className={`terminal-panel border-dashed transition-all duration-200 cursor-pointer ${
+      className={`blz-panel border-dashed transition-all duration-100 cursor-pointer ${
         isDragOver
-          ? 'border-[var(--accent-cyan)] bg-[var(--accent-cyan-dim)]'
-          : 'border-[var(--border-default)] hover:border-[var(--border-bright)]'
-      } ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}
+          ? 'border-[var(--amber)] bg-[var(--amber-dim)]'
+          : 'border-[var(--border)] hover:border-[var(--border-bright)]'
+      } ${isLoading ? 'opacity-40 pointer-events-none' : ''}`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -98,26 +98,27 @@ export default function FileUpload() {
         accept=".csv,.json,.xlsx,.xls,.parquet"
         onChange={onFileSelect}
       />
-      <div className="px-6 py-8 flex flex-col items-center gap-3">
+      <div className="px-4 py-4 flex items-center gap-4">
         {isLoading ? (
           <>
-            <div className="w-5 h-5 border-2 border-[var(--accent-cyan)] border-t-transparent rounded-full animate-spin" />
-            <span className="font-mono text-[11px] text-[var(--text-muted)]">Processing...</span>
+            <div className="w-4 h-4 border-2 border-[var(--amber)] border-t-transparent animate-spin" />
+            <span className="font-mono text-[10px] text-[var(--grey)]">PROCESSING...</span>
           </>
         ) : (
           <>
-            <svg className="w-8 h-8 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-            </svg>
-            <div className="text-center">
-              <p className="text-[12px] font-medium text-[var(--text-secondary)]">Drop data file</p>
-              <p className="font-mono text-[10px] text-[var(--text-muted)] mt-1">CSV · JSON · Excel · Parquet</p>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-[var(--amber)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+              </svg>
+              <span className="text-[10px] font-semibold text-[var(--white)]">DROP DATA FILE</span>
             </div>
+            <span className="text-[8px] text-[var(--grey-dim)]">|</span>
+            <span className="font-mono text-[9px] text-[var(--grey)]">CSV · JSON · XLSX · PARQUET</span>
           </>
         )}
       </div>
       {error && (
-        <div className="mx-3 mb-3 px-3 py-2 rounded bg-[var(--down-dim)] font-mono text-[10px] text-[var(--down)]">{error}</div>
+        <div className="mx-2 mb-2 px-2 py-1 bg-[var(--red-dim)] border border-[rgba(255,23,68,0.3)] font-mono text-[9px] text-[var(--red)]">{error}</div>
       )}
     </div>
   )

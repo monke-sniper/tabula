@@ -16,7 +16,6 @@ export default function App() {
             <Route path="/models" element={<Models />} />
           </Routes>
         </main>
-        <div className="scan-line" />
       </div>
     </BrowserRouter>
   )

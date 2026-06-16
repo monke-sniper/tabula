@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import FileUpload from '../components/FileUpload'
 import DataTable from '../components/DataTable'
 import EDAPanel from '../components/EDAPanel'
@@ -6,57 +7,83 @@ import { useApp } from '../lib/context'
 
 export default function Dashboard() {
   const { uploadData } = useApp()
+  const [clock, setClock] = useState(new Date())
+
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date()), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  const fmtTime = (d: Date) =>
+    d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div className="h-full overflow-y-auto">
-      {/* Top bar */}
-      <div className="h-[42px] flex items-center justify-between px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-secondary)] shrink-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[13px] font-bold tracking-wide text-[var(--text-primary)]">Dashboard</h1>
-          <span className="font-mono text-[9px] text-[var(--text-muted)]">Explore · Forecast · Analyze</span>
+    <div className="h-full flex flex-col">
+      {/* Top status bar */}
+      <div className="h-[26px] flex items-center justify-between px-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
+        <div className="flex items-center gap-4">
+          <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-[var(--amber)]">Dashboard</span>
+          <span className="text-[8px] text-[var(--grey-dim)]">|</span>
+          <span className="text-[8px] text-[var(--grey)]">EXPLORE</span>
+          <span className="text-[8px] text-[var(--grey-dim)]">·</span>
+          <span className="text-[8px] text-[var(--grey)]">FORECAST</span>
+          <span className="text-[8px] text-[var(--grey-dim)]">·</span>
+          <span className="text-[8px] text-[var(--grey)]">ANALYZE</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-[var(--text-muted)]">
-            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-          </span>
-          <div className="live-dot" />
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-[9px] text-[var(--grey)]">{fmtDate(clock)}</span>
+          <span className="font-mono text-[10px] text-[var(--amber)] font-semibold">{fmtTime(clock)}</span>
+          <div className="w-1.5 h-1.5 rounded-full bg-[var(--green)] blink" />
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Upload */}
-        <FileUpload />
+      {/* Content area */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Upload — full width, compact */}
+        <div className="border-b border-[var(--border)]">
+          <FileUpload />
+        </div>
 
         {uploadData && (
           <>
-            {/* Two-column layout: Data + EDA */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 px-1">
-                  <div className="w-1 h-3 bg-[var(--accent-cyan)] rounded-full" />
-                  <span className="font-mono text-[9px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">Data Preview</span>
-                </div>
+            {/* Two-column: DataTable + EDA — split 50/50 */}
+            <div className="grid grid-cols-2 border-b border-[var(--border)]">
+              <div className="border-r border-[var(--border)]">
                 <DataTable />
               </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 px-1">
-                  <div className="w-1 h-3 bg-[var(--accent-blue)] rounded-full" />
-                  <span className="font-mono text-[9px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">Exploratory Analysis</span>
-                </div>
+              <div>
                 <EDAPanel />
               </div>
             </div>
 
-            {/* Forecast */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 px-1">
-                <div className="w-1 h-3 bg-[var(--up)] rounded-full" />
-                <span className="font-mono text-[9px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)]">Forecast</span>
-              </div>
+            {/* Forecast — full width */}
+            <div>
               <ForecastChart />
             </div>
           </>
         )}
+      </div>
+
+      {/* Bottom status bar */}
+      <div className="h-[22px] flex items-center justify-between px-3 border-t border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-[8px] text-[var(--grey-dim)]">TABULA v1.0</span>
+          <span className="text-[8px] text-[var(--grey-dim)]">·</span>
+          <span className="text-[8px] text-[var(--grey)]">MODEL-AGNOSTIC FORECASTING</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {uploadData && (
+            <>
+              <span className="text-[8px] text-[var(--grey)]">
+                {uploadData.rows.toLocaleString()} rows · {uploadData.columns} cols
+              </span>
+              <span className="text-[8px] text-[var(--grey-dim)]">·</span>
+            </>
+          )}
+          <span className="text-[8px] text-[var(--green)]">CONNECTED</span>
+        </div>
       </div>
     </div>
   )

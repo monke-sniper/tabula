@@ -10,24 +10,24 @@ export default function EDAPanel() {
 
   if (!edaStats) {
     return (
-      <div className="terminal-panel p-6 text-center">
-        <span className="font-mono text-[11px] text-[var(--text-muted)]">No data loaded</span>
+      <div className="blz-panel h-full flex items-center justify-center">
+        <span className="font-mono text-[10px] text-[var(--grey)]">NO DATA</span>
       </div>
     )
   }
 
   return (
-    <div className="terminal-panel">
-      <div className="terminal-header">
-        <div className="flex gap-1">
+    <div className="blz-panel h-full flex flex-col">
+      <div className="blz-header">
+        <div className="flex gap-0">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`px-2.5 py-1 rounded text-[10px] font-semibold tracking-wide uppercase transition-colors ${
+              className={`px-2 py-0.5 text-[9px] font-bold tracking-wider uppercase transition-colors border-b ${
                 tab === t.key
-                  ? 'bg-[var(--accent-cyan-dim)] text-[var(--accent-cyan)]'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                  ? 'text-[var(--amber)] border-[var(--amber)] bg-[var(--amber-dim)]'
+                  : 'text-[var(--grey)] border-transparent hover:text-[var(--grey-bright)]'
               }`}
             >
               {t.label}
@@ -35,7 +35,7 @@ export default function EDAPanel() {
           ))}
         </div>
       </div>
-      <div className="p-3">
+      <div className="p-2 flex-1 overflow-y-auto">
         {tab === 'stats' && <StatsView stats={edaStats} />}
         {tab === 'dist' && <DistView stats={edaStats} />}
         {tab === 'corr' && <CorrView stats={edaStats} />}
@@ -47,21 +47,21 @@ export default function EDAPanel() {
 }
 
 const tabs = [
-  { key: 'stats' as EDATab, label: 'Stats' },
-  { key: 'dist' as EDATab, label: 'Dist' },
-  { key: 'corr' as EDATab, label: 'Corr' },
-  { key: 'missing' as EDATab, label: 'Null' },
-  { key: 'outliers' as EDATab, label: 'Out' },
+  { key: 'stats' as EDATab, label: 'STATS' },
+  { key: 'dist' as EDATab, label: 'DIST' },
+  { key: 'corr' as EDATab, label: 'CORR' },
+  { key: 'missing' as EDATab, label: 'NULL' },
+  { key: 'outliers' as EDATab, label: 'OUT' },
 ]
 
 function StatsView({ stats }: { stats: any }) {
   return (
-    <div className="overflow-x-auto max-h-[340px] overflow-y-auto">
+    <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
       <table className="w-full">
         <thead className="sticky top-0 bg-[var(--bg-secondary)]">
           <tr>
-            {['Column', 'Type', 'Nulls', 'Unique', 'Mean', 'Std', 'Min', 'Max'].map(h => (
-              <th key={h} className="px-2 py-1 text-left font-mono text-[8px] font-bold tracking-[0.08em] uppercase text-[var(--text-muted)] border-b border-[var(--border-subtle)]">
+            {['COLUMN', 'TYPE', 'NULL', 'UNIQ', 'MEAN', 'STD', 'MIN', 'MAX'].map(h => (
+              <th key={h} className="px-1.5 py-0.5 text-left font-mono text-[7px] font-bold tracking-[0.1em] uppercase text-[var(--amber)] border-b border-[var(--border)]">
                 {h}
               </th>
             ))}
@@ -69,18 +69,21 @@ function StatsView({ stats }: { stats: any }) {
         </thead>
         <tbody>
           {stats.column_info.map((col: any) => (
-            <tr key={col.name} className="border-b border-[var(--border-subtle)]/30 hover:bg-[var(--bg-tertiary)]/50">
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--accent-cyan)] font-medium">{col.name}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">{col.dtype}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-secondary)]">
-                {col.null_count > 0 && <span className="text-[var(--warning)]">{col.null_count}</span>}
-                {col.null_count === 0 && <span className="text-[var(--text-muted)]">0</span>}
+            <tr key={col.name} className="border-b border-[var(--border-dim)] hover:bg-[var(--bg-tertiary)]">
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--amber)] font-medium">{col.name}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[8px] text-[var(--grey)]">{col.dtype}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px]">
+                {col.null_count > 0 ? (
+                  <span className="text-[var(--amber)]">{col.null_count}</span>
+                ) : (
+                  <span className="text-[var(--grey-dim)]">0</span>
+                )}
               </td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-secondary)]">{col.unique ?? '—'}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-primary)]">{col.mean?.toFixed(2) ?? '—'}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">{col.std?.toFixed(2) ?? '—'}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">{col.min?.toString().slice(0, 10) ?? '—'}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">{col.max?.toString().slice(0, 10) ?? '—'}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--grey-bright)]">{col.unique ?? '—'}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--white)]">{col.mean?.toFixed(2) ?? '—'}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--grey)]">{col.std?.toFixed(2) ?? '—'}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--grey)]">{col.min?.toString().slice(0, 10) ?? '—'}</td>
+              <td className="px-1.5 py-0.5 font-mono text-[9px] text-[var(--grey)]">{col.max?.toString().slice(0, 10) ?? '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -96,15 +99,15 @@ function DistView({ stats }: { stats: any }) {
 
   return (
     <div>
-      <div className="flex gap-1 mb-2 flex-wrap">
+      <div className="flex gap-0 mb-1 flex-wrap">
         {numericCols.map((col: any) => (
           <button
             key={col.name}
             onClick={() => setSel(col.name)}
-            className={`px-2 py-0.5 font-mono text-[9px] rounded transition-colors ${
+            className={`px-1.5 py-0.5 font-mono text-[8px] transition-colors border-b ${
               sel === col.name
-                ? 'bg-[var(--accent-cyan-dim)] text-[var(--accent-cyan)]'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                ? 'text-[var(--amber)] border-[var(--amber)]'
+                : 'text-[var(--grey)] border-transparent hover:text-[var(--grey-bright)]'
             }`}
           >
             {col.name}
@@ -117,16 +120,16 @@ function DistView({ stats }: { stats: any }) {
             x: dist.bins.slice(0, -1),
             y: dist.counts,
             type: 'bar',
-            marker: { color: 'rgba(0, 212, 170, 0.5)', line: { color: 'rgba(0, 212, 170, 0.8)', width: 1 } },
+            marker: { color: 'rgba(255,136,0,0.5)', line: { color: 'rgba(255,136,0,0.8)', width: 0.5 } },
           }]}
           layout={{
-            height: 240,
-            margin: { t: 10, b: 35, l: 40, r: 10 },
+            height: 200,
+            margin: { t: 5, b: 25, l: 35, r: 5 },
             paper_bgcolor: 'transparent',
             plot_bgcolor: 'transparent',
-            font: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
-            xaxis: { gridcolor: '#1e2642', tickfont: { size: 8 } },
-            yaxis: { gridcolor: '#1e2642', tickfont: { size: 8 } },
+            font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+            xaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
+            yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
           }}
           config={{ displayModeBar: false }}
         />
@@ -137,7 +140,7 @@ function DistView({ stats }: { stats: any }) {
 
 function CorrView({ stats }: { stats: any }) {
   const cols = Object.keys(stats.correlations)
-  if (!cols.length) return <div className="text-[11px] text-[var(--text-muted)] py-4 text-center">No numeric columns</div>
+  if (!cols.length) return <div className="text-[9px] text-[var(--grey)] py-4 text-center">NO NUMERIC COLUMNS</div>
 
   return (
     <Plot
@@ -146,18 +149,18 @@ function CorrView({ stats }: { stats: any }) {
         x: cols,
         y: cols,
         type: 'heatmap',
-        colorscale: [[0, '#ff4d6a'], [0.5, '#0a0e17'], [1, '#00d4aa']],
+        colorscale: [[0, '#ff1744'], [0.5, '#000000'], [1, '#00c853']],
         zmin: -1,
         zmax: 1,
       }]}
       layout={{
-        height: 300,
-        margin: { t: 10, b: 70, l: 70, r: 10 },
+        height: 260,
+        margin: { t: 5, b: 60, l: 60, r: 5 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        font: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
-        xaxis: { tickangle: -45, tickfont: { size: 8 } },
-        yaxis: { tickfont: { size: 8 } },
+        font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+        xaxis: { tickangle: -45, tickfont: { size: 7 } },
+        yaxis: { tickfont: { size: 7 } },
       }}
       config={{ displayModeBar: false }}
     />
@@ -168,9 +171,9 @@ function MissingView({ stats }: { stats: any }) {
   const missing = stats.missing_values.filter((m: any) => m.count > 0)
   if (!missing.length) {
     return (
-      <div className="py-6 text-center">
-        <div className="tag tag-up inline-block mb-2">Complete</div>
-        <div className="font-mono text-[11px] text-[var(--text-muted)]">No missing values</div>
+      <div className="py-4 text-center">
+        <span className="blz-tag blz-tag-green">COMPLETE</span>
+        <div className="font-mono text-[9px] text-[var(--grey)] mt-1">NO MISSING VALUES</div>
       </div>
     )
   }
@@ -181,19 +184,19 @@ function MissingView({ stats }: { stats: any }) {
         x: missing.map((m: any) => m.column),
         y: missing.map((m: any) => m.pct),
         type: 'bar',
-        marker: { color: 'rgba(255, 170, 0, 0.6)', line: { color: '#ffaa00', width: 1 } },
+        marker: { color: 'rgba(255,136,0,0.5)', line: { color: '#ff8800', width: 0.5 } },
         text: missing.map((m: any) => `${m.pct.toFixed(1)}%`),
         textposition: 'outside',
-        textfont: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
+        textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
       }]}
       layout={{
-        height: 240,
-        margin: { t: 10, b: 50, l: 40, r: 10 },
+        height: 200,
+        margin: { t: 5, b: 45, l: 35, r: 5 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        font: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
-        yaxis: { gridcolor: '#1e2642', title: '%', tickfont: { size: 8 } },
-        xaxis: { tickangle: -45, tickfont: { size: 8 } },
+        font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+        yaxis: { gridcolor: '#1a1a1a', title: '%', tickfont: { size: 7 } },
+        xaxis: { tickangle: -45, tickfont: { size: 7 } },
       }}
       config={{ displayModeBar: false }}
     />
@@ -204,9 +207,9 @@ function OutlierView({ stats }: { stats: any }) {
   const withOutliers = stats.outliers.filter((o: any) => o.count > 0)
   if (!withOutliers.length) {
     return (
-      <div className="py-6 text-center">
-        <div className="tag tag-up inline-block mb-2">Clean</div>
-        <div className="font-mono text-[11px] text-[var(--text-muted)]">No outliers (IQR)</div>
+      <div className="py-4 text-center">
+        <span className="blz-tag blz-tag-green">CLEAN</span>
+        <div className="font-mono text-[9px] text-[var(--grey)] mt-1">NO OUTLIERS (IQR)</div>
       </div>
     )
   }
@@ -217,19 +220,19 @@ function OutlierView({ stats }: { stats: any }) {
         x: withOutliers.map((o: any) => o.column),
         y: withOutliers.map((o: any) => o.count),
         type: 'bar',
-        marker: { color: 'rgba(255, 77, 106, 0.5)', line: { color: '#ff4d6a', width: 1 } },
+        marker: { color: 'rgba(255,23,68,0.5)', line: { color: '#ff1744', width: 0.5 } },
         text: withOutliers.map((o: any) => `${o.count}`),
         textposition: 'outside',
-        textfont: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
+        textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
       }]}
       layout={{
-        height: 240,
-        margin: { t: 10, b: 50, l: 40, r: 10 },
+        height: 200,
+        margin: { t: 5, b: 45, l: 35, r: 5 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        font: { color: '#5a6580', size: 9, family: 'JetBrains Mono' },
-        yaxis: { gridcolor: '#1e2642', tickfont: { size: 8 } },
-        xaxis: { tickangle: -45, tickfont: { size: 8 } },
+        font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+        yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
+        xaxis: { tickangle: -45, tickfont: { size: 7 } },
       }}
       config={{ displayModeBar: false }}
     />
