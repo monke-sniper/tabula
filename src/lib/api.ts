@@ -1,9 +1,3 @@
-import { type ClassValue, clsx } from 'clsx'
-
-export function cn(...inputs: ClassValue[]) {
-  return clsx(inputs)
-}
-
 export const API_BASE = 'http://127.0.0.1:8420'
 
 export async function apiFetch<T>(

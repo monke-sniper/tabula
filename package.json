@@ -16,7 +16,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
-    "recharts": "^2.15.0",
     "plotly.js-dist-min": "^2.35.0",
     "react-plotly.js": "^2.6.0"
   },
