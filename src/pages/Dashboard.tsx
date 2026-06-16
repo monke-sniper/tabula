@@ -20,8 +20,7 @@ export default function Dashboard() {
     d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Top status bar */}
+    <div className="h-full flex flex-col overflow-hidden">
       <div className="h-[26px] flex items-center justify-between px-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
         <div className="flex items-center gap-4">
           <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-[var(--amber)]">Dashboard</span>
@@ -39,34 +38,35 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Content area */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Upload — full width, compact */}
-        <div className="border-b border-[var(--border)]">
-          <FileUpload />
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="h-full flex flex-col">
+          <div className="shrink-0 border-b border-[var(--border)]">
+            <FileUpload />
+          </div>
+
+          {uploadData && (
+            <>
+              <div className="flex-1 min-h-0 grid grid-cols-2 border-b border-[var(--border)]">
+                <div className="border-r border-[var(--border)] overflow-hidden">
+                  <DataTable />
+                </div>
+                <div className="overflow-hidden">
+                  <EDAPanel />
+                </div>
+              </div>
+
+              <div className="h-[45%] min-h-0 overflow-hidden">
+                <ForecastChart />
+              </div>
+            </>
+          )}
+
+          {!uploadData && (
+            <div className="flex-1 min-h-0" />
+          )}
         </div>
-
-        {uploadData && (
-          <>
-            {/* Two-column: DataTable + EDA — split 50/50 */}
-            <div className="grid grid-cols-2 border-b border-[var(--border)]">
-              <div className="border-r border-[var(--border)]">
-                <DataTable />
-              </div>
-              <div>
-                <EDAPanel />
-              </div>
-            </div>
-
-            {/* Forecast — full width */}
-            <div>
-              <ForecastChart />
-            </div>
-          </>
-        )}
       </div>
 
-      {/* Bottom status bar */}
       <div className="h-[22px] flex items-center justify-between px-3 border-t border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-[8px] text-[var(--grey-dim)]">TABULA v1.0</span>
