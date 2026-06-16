@@ -1,30 +1,21 @@
 # Product
 
-## Register
-product
+## What
 
-## Users
-Data analysts and quantitative researchers who need to quickly explore time series data, run forecasts, and fine-tune custom models. They work in browser-based tools and expect Bloomberg Terminal-level data density with modern web aesthetics.
+Desktop forecasting app. Upload tabular data, run EDA, visualize forecasts with probability-weighted fan charts, fine-tune custom models.
 
-## Product Purpose
-Tabula is a model-agnostic forecasting desktop app that lets users upload tabular data, explore patterns via EDA, visualize forecasts with probability-weighted fan charts, and fine-tune custom models — all in one professional interface.
+## Who
 
-## Brand Personality
-Precision · Dense · Terminal-native
+Data analysts and quant researchers who need fast time series exploration without setting up a full ML pipeline.
 
-## Anti-references
-- Generic SaaS dashboards with cream backgrounds and purple gradients
-- Bloomberg Terminal's green-on-black (we're data-dense but modern, not retro)
-- Cookie-cutter admin panels with identical card grids
-- Any use of Inter font or warm-toned neutrals
+## How
 
-## Design Principles
-- Every pixel carries information — no decorative whitespace
+- Electron + React frontend, Python FastAPI backend
+- Statistical forecasting for quick results, PyTorch LSTM for fine-tuning
+- Bloomberg-inspired terminal UI — dense, monospace, dark
+
+## Design
+
+- Every pixel carries information
 - Monospace for data, clean sans-serif for chrome
-- Dark backgrounds reduce eye strain for long analysis sessions
 - Color encodes meaning, not decoration
-
-## Accessibility & Inclusion
-- WCAG AA contrast ratios on all text
-- Reduced motion support via prefers-reduced-motion
-- Color is never the only encoding for data
