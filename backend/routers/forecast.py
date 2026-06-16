@@ -1,11 +1,13 @@
+import logging
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from typing import Optional
 
 router = APIRouter()
+logger = logging.getLogger("tabula.forecast")
 
-sessions_store = {}
+_forecast_cancelled = False
 
 
 def _get_df(session_id: str) -> pd.DataFrame:
@@ -15,6 +17,14 @@ def _get_df(session_id: str) -> pd.DataFrame:
     return sessions[session_id]
 
 
+@router.post("/forecast/cancel")
+def cancel_forecast():
+    global _forecast_cancelled
+    _forecast_cancelled = True
+    logger.info("Forecast cancellation requested")
+    return {"status": "cancelled"}
+
+
 @router.post("/forecast/{session_id}")
 def run_forecast(
     session_id: str,
@@ -22,6 +32,9 @@ def run_forecast(
     prediction_length: int = 24,
     target_column: Optional[str] = None,
 ):
+    global _forecast_cancelled
+    _forecast_cancelled = False
+
     df = _get_df(session_id)
 
     if target_column and target_column in df.columns:
@@ -43,7 +56,6 @@ def run_forecast(
     historical = series[:split_point]
     actual_forecast = series[split_point:]
 
-    # Detect timestamp column
     ts_col = None
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -55,10 +67,6 @@ def run_forecast(
     else:
         timestamps = list(range(len(series)))
 
-    results = []
-
-    # Use simple statistical forecasting with multiple perturbation iterations
-    # This creates realistic fan chart behavior without requiring a heavy model
     window_size = min(48, len(historical) // 4)
     if window_size < 5:
         window_size = min(5, len(historical))
@@ -69,20 +77,22 @@ def run_forecast(
     trend = np.polyfit(range(len(historical[-min(100, len(historical)):])),
                        historical[-min(100, len(historical)):], 1)[0]
 
-    # Compute quantile levels from historical noise
     residuals = np.diff(historical[-min(200, len(historical)):])
     noise_std = np.std(residuals) if len(residuals) > 1 else std_val * 0.1
 
+    results = []
+
     for t in range(prediction_length):
+        if _forecast_cancelled:
+            logger.info("Forecast cancelled at step %d/%d", t + 1, prediction_length)
+            raise HTTPException(status_code=499, detail="Forecast cancelled by user")
+
         step = t + 1
-        # Base prediction with trend
         base = mean_val + trend * step
 
-        # Generate iterations with decreasing variance over time (confidence narrows)
         iteration_values = []
         for i in range(iterations):
             np.random.seed(42 + t * 1000 + i)
-            # Each iteration has a slight random walk from the base
             noise = np.random.normal(0, noise_std * np.sqrt(step) * 0.5)
             seasonal = 0.1 * std_val * np.sin(2 * np.pi * t / min(24, prediction_length))
             iter_val = base + noise + seasonal
@@ -110,7 +120,6 @@ def run_forecast(
             'upper_75': upper_75,
         })
 
-    # Compute metrics
     actuals = np.array([r['actual'] for r in results if r['actual'] is not None])
     medians = np.array([r['median'] for r in results if r['actual'] is not None])
 
@@ -120,6 +129,8 @@ def run_forecast(
         mape = float(np.mean(np.abs((actuals - medians) / (np.abs(actuals) + 1e-10))) * 100)
     else:
         mae = rmse = mape = 0.0
+
+    logger.info("Forecast complete: %d iterations, %d steps", iterations, prediction_length)
 
     return {
         'results': results,
