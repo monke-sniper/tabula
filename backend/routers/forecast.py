@@ -82,6 +82,22 @@ def run_forecast(
 
     results = []
 
+    # Historical points (actual values, no forecasts)
+    for i in range(len(historical)):
+        ts = str(timestamps[i]) if i < len(timestamps) else str(i)
+        results.append({
+            'timestamp': ts,
+            'actual': round(float(historical[i]), 6),
+            'is_forecast': False,
+            'iteration_values': [],
+            'median': round(float(historical[i]), 6),
+            'lower_10': round(float(historical[i]), 6),
+            'upper_90': round(float(historical[i]), 6),
+            'lower_25': round(float(historical[i]), 6),
+            'upper_75': round(float(historical[i]), 6),
+        })
+
+    # Forecast points
     for t in range(prediction_length):
         if _forecast_cancelled:
             logger.info("Forecast cancelled at step %d/%d", t + 1, prediction_length)
@@ -112,6 +128,7 @@ def run_forecast(
         results.append({
             'timestamp': ts,
             'actual': actual_val,
+            'is_forecast': True,
             'iteration_values': iteration_values,
             'median': median_val,
             'lower_10': lower_10,

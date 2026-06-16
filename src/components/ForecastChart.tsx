@@ -110,11 +110,19 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
   const results = data.results
   if (!results.length) return null
 
-  const historical = results.filter(r => r.actual !== null)
-  const forecast = results.filter(r => r.actual === null)
+  const historical = results.filter(r => !r.is_forecast)
+  const forecast = results.filter(r => r.is_forecast)
   const numIter = forecast[0]?.iteration_values.length ?? 0
 
-  const historicalX = useMemo(() => historical.map(r => r.timestamp), [historical])
+  // Build numeric x-axis: all timestamps mapped to indices
+  const allTimestamps = useMemo(() => results.map(r => r.timestamp), [results])
+  const tsToIdx = useMemo(() => {
+    const m = new Map<string, number>()
+    allTimestamps.forEach((ts, i) => m.set(ts, i))
+    return m
+  }, [allTimestamps])
+
+  const historicalX = useMemo(() => historical.map(r => tsToIdx.get(r.timestamp) ?? 0), [historical, tsToIdx])
   const historicalY = useMemo(() => historical.map(r => r.actual!), [historical])
 
   const volumeY = useMemo(() => {
@@ -173,8 +181,11 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
 
     const maxScore = ranked[ranked.length - 1]?.score || 1
 
+    const forecastX = forecast.map(r => tsToIdx.get(r.timestamp) ?? 0)
+
+    // 80% confidence band
     traces.push({
-      x: [...forecast.map(r => r.timestamp), ...[...forecast].reverse().map(r => r.timestamp)],
+      x: [...forecastX, ...[...forecastX].reverse()],
       y: [...forecast.map(r => r.upper_90), ...[...forecast].reverse().map(r => r.lower_10)],
       type: 'scatter',
       fill: 'toself',
@@ -184,8 +195,9 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
       hoverinfo: 'skip',
     })
 
+    // 50% confidence band
     traces.push({
-      x: [...forecast.map(r => r.timestamp), ...[...forecast].reverse().map(r => r.timestamp)],
+      x: [...forecastX, ...[...forecastX].reverse()],
       y: [...forecast.map(r => r.upper_75), ...[...forecast].reverse().map(r => r.lower_25)],
       type: 'scatter',
       fill: 'toself',
@@ -195,64 +207,78 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
       hoverinfo: 'skip',
     })
 
+    // Iteration traces — vertical markers at each point
     for (const { idx, score } of [...ranked].reverse()) {
       const opacity = 0.08 + 0.85 * (1 - score / maxScore)
       traces.push({
-        x: forecast.map(r => r.timestamp),
+        x: forecastX,
         y: forecast.map(r => r.iteration_values[idx]),
         type: 'scatter',
-        mode: 'lines+markers',
-        line: { color: `rgba(255, 136, 0, ${opacity})`, width: 1, dash: 'dash' },
-        marker: { size: 2, color: `rgba(255, 136, 0, ${opacity})` },
+        mode: 'markers',
+        marker: { size: 4, color: `rgba(255, 136, 0, ${opacity})`, symbol: 'line-ns' },
         showlegend: false,
         hoverinfo: 'skip',
       })
     }
 
+    // Median — solid amber line
     traces.push({
-      x: forecast.map(r => r.timestamp),
+      x: forecastX,
       y: forecast.map(r => r.median),
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Median',
-      line: { color: '#ff8800', width: 2.5, dash: 'dash' },
+      line: { color: '#ff8800', width: 2 },
       marker: { size: 4, color: '#ff8800', symbol: 'circle' },
-      hovertemplate: '%{x}<br>Median: %{y:.2f}<extra></extra>',
+      hovertemplate: '%{text}<br>Median: %{y:.2f}<extra></extra>',
+      text: forecast.map(r => r.timestamp),
     })
 
+    // Actual values in forecast window (if any)
     const withActual = forecast.filter(r => r.actual !== null)
     if (withActual.length) {
       traces.push({
-        x: withActual.map(r => r.timestamp),
+        x: withActual.map(r => tsToIdx.get(r.timestamp) ?? 0),
         y: withActual.map(r => r.actual),
         type: 'scatter',
         mode: 'markers',
         name: 'Actual',
         marker: { color: '#00bcd4', size: 4, symbol: 'diamond', line: { color: '#000', width: 1 } },
-        hovertemplate: '%{x}<br>Actual: %{y:.2f}<extra></extra>',
+        hovertemplate: '%{text}<br>Actual: %{y:.2f}<extra></extra>',
+        text: withActual.map(r => r.timestamp),
       })
     }
   }
+
+  // Tick labels: show every Nth timestamp
+  const tickStep = Math.max(1, Math.floor(allTimestamps.length / 12))
+  const tickVals = allTimestamps.map((_, i) => i).filter((_, i) => i % tickStep === 0)
+  const tickTexts = tickVals.map(i => {
+    const ts = allTimestamps[i]
+    // Shorten: "2024-01-21T08:00:00" → "08:00"
+    const match = ts.match(/T(\d{2}:\d{2})/)
+    return match ? match[1] : ts.slice(0, 10)
+  })
 
   return (
     <Plot
       data={traces}
       layout={{
         height: undefined,
-        margin: { t: 5, b: 25, l: 45, r: 45 },
+        margin: { t: 5, b: 30, l: 45, r: 45 },
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         font: { color: '#666666', size: 9, family: 'IBM Plex Mono' },
         xaxis: {
-          type: 'category',
+          tickmode: 'array',
+          tickvals: tickVals,
+          ticktext: tickTexts,
           gridcolor: '#1a1a1a',
           gridwidth: 1,
-          tickangle: 0,
+          tickangle: -45,
           tickfont: { size: 8 },
           linecolor: '#222222',
           rangeslider: { visible: false },
-          categoryorder: 'array',
-          categoryarray: results.map(r => r.timestamp),
         },
         yaxis: {
           title: { text: 'VALUE', font: { size: 8, color: '#666' } },
@@ -285,8 +311,8 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
         },
         shapes: forecast.length && historical.length ? [{
           type: 'line',
-          x0: forecast[0].timestamp,
-          x1: forecast[0].timestamp,
+          x0: tsToIdx.get(forecast[0].timestamp) ?? 0,
+          x1: tsToIdx.get(forecast[0].timestamp) ?? 0,
           y0: 0,
           y1: 1,
           yref: 'paper',

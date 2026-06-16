@@ -25,6 +25,7 @@ export interface EDAStats {
 export interface ForecastResult {
   timestamp: string;
   actual: number | null;
+  is_forecast: boolean;
   iteration_values: number[];
   median: number;
   lower_10: number;
