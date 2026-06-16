@@ -202,7 +202,7 @@ function ForecastPlot({ data }: { data: ForecastResponse }) {
         y: forecast.map(r => r.iteration_values[idx]),
         type: 'scatter',
         mode: 'lines',
-        line: { color: `rgba(255, 136, 0, ${opacity})`, width: 0.7, dash: 'dot' },
+        line: { color: `rgba(255, 136, 0, ${opacity})`, width: 0.7, dash: 'dash' },
         showlegend: false,
         hoverinfo: 'skip',
       })
