@@ -15,7 +15,7 @@ export default function DataTable() {
 
   return (
     <div className="blz-panel h-full flex flex-col">
-      <div className="blz-header">
+      <div className="blz-header shrink-0">
         <span className="title">DATA</span>
         <div className="flex items-center gap-2">
           <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="blz-btn py-0 px-1 text-[8px]">{"<"}</button>
@@ -23,7 +23,7 @@ export default function DataTable() {
           <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="blz-btn py-0 px-1 text-[8px]}">{">"}</button>
         </div>
       </div>
-      <div className="overflow-x-auto flex-1 overflow-y-auto">
+      <div className="overflow-auto flex-1 min-h-0">
         <table className="w-full">
           <thead className="sticky top-0 bg-[var(--bg-secondary)]">
             <tr>
