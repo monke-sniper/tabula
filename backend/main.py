@@ -1,6 +1,9 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from services import forecaster as fc
 from routers import data, forecast, finetune
 
 logging.basicConfig(
@@ -9,7 +12,20 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-app = FastAPI(title="Tabula Backend", version="1.0.0")
+_loaded_models: set[str] = set()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-warm the default chronos model so the first forecast is fast.
+    try:
+        fc.warmup_default_models("amazon/chronos-t5-small")
+    except Exception as e:  # pragma: no cover
+        logging.getLogger("tabula.main").warning("warmup spawn failed: %s", e)
+    yield
+
+
+app = FastAPI(title="Tabula Backend", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,4 +47,8 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "version": "1.0.0"}
+    return {
+        "status": "healthy",
+        "version": "1.1.0",
+        "models_loaded": sorted(_loaded_models) or ["amazon/chronos-t5-small (warming)"],
+    }

@@ -1,17 +1,23 @@
 import os
 import json
-import uuid
+import re
+import shutil
 import threading
+import time
+from collections import deque
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
 router = APIRouter()
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
 os.makedirs(MODELS_DIR, exist_ok=True)
+
+CUSTOM_NAME_RE = re.compile(r"^[a-z0-9_-]{3,40}$")
 
 training_status = {
     'status': 'idle',
@@ -21,9 +27,13 @@ training_status = {
     'train_loss': 0.0,
     'eval_loss': 0.0,
     'message': '',
+    'device': 'cpu',
+    'epoch_ms': 0,
 }
 
 training_thread: Optional[threading.Thread] = None
+loss_history: deque[dict] = deque(maxlen=1000)
+_training_lock = threading.Lock()
 
 
 class FineTuneRequest(BaseModel):
@@ -71,11 +81,16 @@ def _save_model_registry(registry: dict):
 
 def _train_worker(config: dict, df: pd.DataFrame):
     global training_status
+    loss_history.clear()
     try:
         training_status['status'] = 'training'
         training_status['message'] = 'Preparing data...'
 
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        # skip id-like columns
+        numeric_cols = [c for c in numeric_cols if not _is_id_like(c)]
+        if not numeric_cols:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         if not numeric_cols:
             training_status['status'] = 'error'
             training_status['message'] = 'No numeric columns found'
@@ -89,7 +104,6 @@ def _train_worker(config: dict, df: pd.DataFrame):
             training_status['message'] = f'Not enough data ({len(values)} points). Need at least 50.'
             return
 
-        # Normalize
         mean_val = np.mean(values)
         std_val = np.std(values) if np.std(values) > 0 else 1.0
         normalized = (values - mean_val) / std_val
@@ -100,7 +114,6 @@ def _train_worker(config: dict, df: pd.DataFrame):
             training_status['message'] = 'Data too short for training'
             return
 
-        # Create sequences
         X, y = [], []
         for i in range(len(normalized) - seq_len):
             X.append(normalized[i:i + seq_len])
@@ -119,6 +132,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
             from torch.utils.data import DataLoader, TensorDataset
 
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            training_status['device'] = str(device)
 
             class TimeSeriesModel(nn.Module):
                 def __init__(self, input_size):
@@ -163,6 +177,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
             training_status['message'] = f'Training on device: {device}'
 
             for epoch in range(config['num_epochs']):
+                t_epoch = time.time()
                 model.train()
                 epoch_loss = 0.0
                 n_batches = 0
@@ -190,8 +205,13 @@ def _train_worker(config: dict, df: pd.DataFrame):
                 training_status['eval_loss'] = round(val_loss, 6)
                 training_status['progress'] = round((epoch + 1) / config['num_epochs'] * 100, 1)
                 training_status['message'] = f'Epoch {epoch + 1}/{config["num_epochs"]} - loss: {avg_train_loss:.4f}'
+                training_status['epoch_ms'] = int((time.time() - t_epoch) * 1000)
+                loss_history.append({
+                    'step': epoch + 1,
+                    'train_loss': round(avg_train_loss, 6),
+                    'eval_loss': round(val_loss, 6),
+                })
 
-            # Save model
             model_path = os.path.join(MODELS_DIR, config['custom_name'])
             os.makedirs(model_path, exist_ok=True)
             torch.save({
@@ -205,7 +225,6 @@ def _train_worker(config: dict, df: pd.DataFrame):
                 'norm_stats': {'mean': float(mean_val), 'std': float(std_val)},
             }, os.path.join(model_path, 'model.pt'))
 
-            # Register model
             registry = _load_model_registry()
             registry['models'] = [
                 m for m in registry['models'] if m['name'] != config['custom_name']
@@ -215,6 +234,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
                 'base_model': config['model_name'],
                 'path': model_path,
                 'created_at': pd.Timestamp.now().isoformat(),
+                'engine': 'lstm-finetuned',
                 'metrics': {
                     'loss': training_status['train_loss'],
                     'eval_loss': training_status['eval_loss'],
@@ -234,19 +254,35 @@ def _train_worker(config: dict, df: pd.DataFrame):
         training_status['message'] = f'Training failed: {str(e)}'
 
 
+def _is_id_like(name: str) -> bool:
+    n = name.lower()
+    return n in {"id", "idx", "index"} or n.endswith("_id") or n.startswith("id_")
+
+
 @router.post("/finetune/start")
 def start_finetune(req: FineTuneRequest):
     global training_thread
 
-    if training_status['status'] == 'training':
+    if training_status['status'] == 'training' or training_status['status'] == 'starting':
         raise HTTPException(status_code=400, detail="Training already in progress")
 
     df = _get_df(req.session_id)
 
-    if not req.custom_name.strip():
+    name = (req.custom_name or "").strip()
+    if not name:
         raise HTTPException(status_code=400, detail="Custom model name is required")
+    if not CUSTOM_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="custom_name must match ^[a-z0-9_-]{3,40}$ (lowercase letters, digits, _ and -)",
+        )
+
+    registry = _load_model_registry()
+    if any(m['name'] == name for m in registry['models']):
+        raise HTTPException(status_code=409, detail=f"Model '{name}' already exists; pick another name")
 
     config = req.model_dump()
+    config['custom_name'] = name
 
     training_status.update({
         'status': 'starting',
@@ -256,6 +292,8 @@ def start_finetune(req: FineTuneRequest):
         'train_loss': 0,
         'eval_loss': 0,
         'message': 'Initializing...',
+        'device': 'cpu',
+        'epoch_ms': 0,
     })
 
     training_thread = threading.Thread(target=_train_worker, args=(config, df), daemon=True)
@@ -267,6 +305,11 @@ def start_finetune(req: FineTuneRequest):
 @router.get("/finetune/status")
 def get_status():
     return training_status
+
+
+@router.get("/finetune/loss-history")
+def get_loss_history():
+    return {"history": list(loss_history)}
 
 
 @router.get("/models")
@@ -284,3 +327,20 @@ def set_active_model(req: SetActiveRequest):
     registry['active'] = req.model
     _save_model_registry(registry)
     return {"status": "ok", "active": req.model}
+
+
+@router.delete("/models/{name}")
+def delete_model(name: str):
+    registry = _load_model_registry()
+    before = len(registry['models'])
+    registry['models'] = [m for m in registry['models'] if m['name'] != name]
+    if len(registry['models']) == before:
+        raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
+    if registry.get('active') == name:
+        registry['active'] = 'amazon/chronos-t5-small'
+    _save_model_registry(registry)
+    # remove artifacts
+    model_dir = os.path.join(MODELS_DIR, name)
+    if os.path.isdir(model_dir):
+        shutil.rmtree(model_dir, ignore_errors=True)
+    return {"status": "deleted", "name": name, "active": registry['active']}

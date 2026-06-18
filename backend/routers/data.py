@@ -34,7 +34,8 @@ def detect_timestamp_column(df: pd.DataFrame) -> Optional[str]:
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             return col
-        if df[col].dtype == object:
+        # In modern pandas the dtype may be `string`, not `object`
+        if df[col].dtype == object or pd.api.types.is_string_dtype(df[col]):
             try:
                 pd.to_datetime(df[col].head(10))
                 return col
@@ -80,6 +81,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     sessions[session_id] = df
+    session_meta[session_id] = {"filename": file.filename}
 
     ts_col = detect_timestamp_column(df)
     if ts_col and not pd.api.types.is_datetime64_any_dtype(df[ts_col]):
@@ -122,6 +124,7 @@ async def upload_by_path(req: UploadPathRequest):
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     sessions[session_id] = df
+    session_meta[session_id] = {"filename": os.path.basename(req.path)}
 
     ts_col = detect_timestamp_column(df)
     if ts_col and not pd.api.types.is_datetime64_any_dtype(df[ts_col]):
@@ -237,3 +240,84 @@ def get_session(session_id: str) -> pd.DataFrame:
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     return sessions[session_id]
+
+
+@router.get("/sessions")
+def list_sessions():
+    import time
+    out = []
+    now = time.time()
+    for sid, df in sessions.items():
+        path = os.path.join(SESSION_DIR, f"{sid}.csv")
+        age = 0.0
+        if os.path.exists(path):
+            age = now - os.path.getmtime(path)
+        out.append({
+            "session_id": sid,
+            "filename": session_meta.get(sid, {}).get("filename", ""),
+            "rows": int(df.shape[0]),
+            "columns": int(df.shape[1]),
+            "age_seconds": round(age, 1),
+        })
+    return {"sessions": out}
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    del sessions[session_id]
+    session_meta.pop(session_id, None)
+    for ext in (".csv", ".json", ".xlsx", ".xls", ".parquet"):
+        path = os.path.join(SESSION_DIR, f"{session_id}{ext}")
+        if os.path.exists(path):
+            os.remove(path)
+            break
+    return {"status": "deleted", "session_id": session_id}
+
+
+class CleanRequest(BaseModel):
+    strategy: str  # 'drop' | 'mean' | 'zero' | 'ffill'
+    columns: list[str] = []
+
+
+@router.post("/sessions/{session_id}/clean")
+def clean_session(session_id: str, req: CleanRequest):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if req.strategy not in {"drop", "mean", "zero", "ffill"}:
+        raise HTTPException(status_code=400, detail="strategy must be drop|mean|zero|ffill")
+
+    df = sessions[session_id].copy()
+    rows_before = int(df.shape[0])
+    cols_to_touch = [c for c in req.columns if c in df.columns]
+    if not cols_to_touch and req.strategy != "drop":
+        raise HTTPException(status_code=400, detail="no columns specified to clean")
+
+    if req.strategy == "drop":
+        if cols_to_touch:
+            df = df.dropna(subset=cols_to_touch)
+        else:
+            df = df.dropna()
+    elif req.strategy == "mean":
+        for c in cols_to_touch:
+            if pd.api.types.is_numeric_dtype(df[c]):
+                mean = df[c].mean()
+                df[c] = df[c].fillna(mean)
+    elif req.strategy == "zero":
+        for c in cols_to_touch:
+            df[c] = df[c].fillna(0)
+    elif req.strategy == "ffill":
+        for c in cols_to_touch:
+            df[c] = df[c].ffill().bfill()
+
+    sessions[session_id] = df
+    return {
+        "session_id": session_id,
+        "rows_before": rows_before,
+        "rows_after": int(df.shape[0]),
+        "columns_modified": cols_to_touch if cols_to_touch else list(df.columns),
+    }
+
+
+session_meta: dict[str, dict] = {}
