@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import Plot from 'react-plotly.js'
 import { apiGet, apiPost } from '../lib/api'
 import { useApp } from '../lib/context'
 import { useToast } from '../lib/toast'
-import type { FineTuneConfig, FineTuneStatus } from '../lib/types'
+import type { FineTuneConfig, FineTuneStatus, LossPoint } from '../lib/types'
 
 const BASE_MODELS = [
   'amazon/chronos-t5-small',
@@ -10,8 +11,11 @@ const BASE_MODELS = [
   'amazon/chronos-t5-large',
   'amazon/chronos-bolt-small',
   'amazon/chronos-bolt-base',
+  'amazon/chronos-bolt-mini',
   'google/timesfm-1.0-200m',
 ]
+
+const NAME_RE = /^[a-z0-9_-]{3,40}$/
 
 export default function FineTune() {
   const { uploadData, sessionId, refreshModels } = useApp()
@@ -31,12 +35,19 @@ export default function FineTune() {
     status: 'idle', progress: 0, current_epoch: 0, total_epochs: 0,
     train_loss: 0, eval_loss: 0, message: '',
   })
+  const [lossHistory, setLossHistory] = useState<LossPoint[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const nameValid = useMemo(() => NAME_RE.test(config.custom_name), [config.custom_name])
 
   const pollStatus = useCallback(async () => {
     try {
-      const s = await apiGet<FineTuneStatus>('/finetune/status')
+      const [s, h] = await Promise.all([
+        apiGet<FineTuneStatus>('/finetune/status'),
+        apiGet<{ history: LossPoint[] }>('/finetune/loss-history'),
+      ])
       setStatus(s)
+      setLossHistory(h.history || [])
       if (s.status === 'completed' || s.status === 'error') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
       }
@@ -47,6 +58,10 @@ export default function FineTune() {
 
   const startTraining = async () => {
     if (!sessionId || !config.custom_name.trim()) return
+    if (!nameValid) {
+      toast('error', 'Invalid name', 'lowercase letters, digits, _, -; 3-40 chars')
+      return
+    }
     setStatus(prev => ({ ...prev, status: 'training', message: 'Starting...' }))
     try {
       await apiPost('/finetune/start', { session_id: sessionId, ...config })
@@ -68,9 +83,13 @@ export default function FineTune() {
     }
   }, [status.status, refreshModels, toast, config.custom_name, status.message])
 
+  const isTraining = status.status === 'training' || status.status === 'starting'
+  const etaMs = isTraining && status.epoch_ms && status.total_epochs && status.current_epoch
+    ? Math.max(0, (status.total_epochs - status.current_epoch) * status.epoch_ms)
+    : 0
+
   return (
     <div className="h-full flex flex-col">
-      {/* Top bar */}
       <div className="h-[26px] flex items-center px-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
         <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-[var(--amber)]">Fine-Tune</span>
         <span className="ml-3 font-mono text-[8px] text-[var(--grey)]">TRAIN CUSTOM MODELS VIA PYTORCH</span>
@@ -84,10 +103,10 @@ export default function FineTune() {
           </div>
         )}
 
-        {/* Config */}
         <div className="blz-panel">
           <div className="blz-header">
             <span className="title">CONFIGURATION</span>
+            <span className="meta font-mono">LSTM FINE-TUNE</span>
           </div>
           <div className="p-3 space-y-3 border-t border-[var(--border)]">
             <div className="grid grid-cols-2 gap-3">
@@ -98,8 +117,19 @@ export default function FineTune() {
                 </select>
               </div>
               <div className="space-y-0.5">
-                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">CUSTOM NAME</label>
-                <input className="blz-input w-full" placeholder="my-model" value={config.custom_name} onChange={e => setConfig(c => ({ ...c, custom_name: e.target.value }))} />
+                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">
+                  CUSTOM NAME
+                  {config.custom_name && !nameValid && <span className="ml-1 text-[var(--red)]">INVALID</span>}
+                </label>
+                <input
+                  className="blz-input w-full"
+                  placeholder="my-model-001"
+                  value={config.custom_name}
+                  onChange={e => setConfig(c => ({ ...c, custom_name: e.target.value }))}
+                />
+                <div className="font-mono text-[7px] text-[var(--grey-dim)]">
+                  {config.custom_name.length}/40 · [a-z0-9_-]
+                </div>
               </div>
             </div>
 
@@ -117,47 +147,85 @@ export default function FineTune() {
               </div>
             </div>
 
-            <button onClick={startTraining} disabled={!uploadData || status.status === 'training'} className="blz-btn primary w-full py-1.5">
-              {status.status === 'training' ? 'TRAINING...' : 'START TRAINING'}
+            <button
+              onClick={startTraining}
+              disabled={!uploadData || isTraining || !nameValid}
+              className="blz-btn primary w-full py-1.5"
+            >
+              {isTraining ? 'TRAINING...' : 'START TRAINING'}
             </button>
           </div>
         </div>
 
-        {/* Status */}
         {status.status !== 'idle' && (
           <div className="blz-panel">
             <div className="blz-header">
               <div className="flex items-center gap-2">
                 <div className={`w-1.5 h-1.5 rounded-full ${
-                  status.status === 'training' ? 'bg-[var(--amber)] blink' :
+                  isTraining ? 'bg-[var(--amber)] blink' :
                   status.status === 'completed' ? 'bg-[var(--green)]' : 'bg-[var(--red)]'
                 }`} />
                 <span className="title uppercase">{status.status}</span>
               </div>
-              {status.status === 'training' && (
+              {isTraining && (
                 <span className="meta font-mono">
-                  EPOCH {status.current_epoch}/{status.total_epochs} · {status.progress.toFixed(0)}%
+                  EPOCH {status.current_epoch}/{status.total_epochs} · {status.progress.toFixed(0)}% · {etaMs ? `ETA ${(etaMs/1000).toFixed(0)}s` : ''}
                 </span>
               )}
             </div>
             <div className="p-3 space-y-2 border-t border-[var(--border)]">
-              {status.status === 'training' && (
+              {isTraining && (
                 <div className="w-full bg-[var(--bg-primary)] h-1">
                   <div className="bg-[var(--amber)] h-1 transition-all duration-500" style={{ width: `${status.progress}%` }} />
                 </div>
               )}
-              <div className="flex gap-4">
-                <div className="font-mono text-[9px]">
-                  <span className="text-[var(--grey)]">TRAIN: </span>
-                  <span className="text-[var(--white)]">{status.train_loss?.toFixed(4) ?? '—'}</span>
-                </div>
-                <div className="font-mono text-[9px]">
-                  <span className="text-[var(--grey)]">EVAL: </span>
-                  <span className="text-[var(--white)]">{status.eval_loss?.toFixed(4) ?? '—'}</span>
-                </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <Stat label="TRAIN" value={status.train_loss?.toFixed(4) ?? '—'} />
+                <Stat label="EVAL" value={status.eval_loss?.toFixed(4) ?? '—'} />
+                <Stat label="DEVICE" value={status.device ?? 'cpu'} />
+                <Stat label="EPOCH_MS" value={status.epoch_ms ? `${status.epoch_ms}ms` : '—'} />
               </div>
               {status.message && (
                 <div className="font-mono text-[9px] text-[var(--grey)] bg-[var(--bg-primary)] px-2 py-1 border border-[var(--border)]">{status.message}</div>
+              )}
+              {lossHistory.length > 0 && (
+                <div className="h-[140px] border border-[var(--border-dim)]">
+                  <Plot
+                    data={[
+                      {
+                        x: lossHistory.map((p) => p.step),
+                        y: lossHistory.map((p) => p.train_loss),
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'train',
+                        line: { color: '#00bcd4', width: 1.5 },
+                        marker: { size: 4, color: '#00bcd4' },
+                      },
+                      {
+                        x: lossHistory.map((p) => p.step),
+                        y: lossHistory.map((p) => p.eval_loss),
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'eval',
+                        line: { color: '#ff8800', width: 1.5 },
+                        marker: { size: 4, color: '#ff8800' },
+                      },
+                    ]}
+                    layout={{
+                      height: undefined,
+                      margin: { t: 5, b: 25, l: 40, r: 5 },
+                      paper_bgcolor: 'transparent',
+                      plot_bgcolor: 'transparent',
+                      font: { color: '#666', size: 7, family: 'IBM Plex Mono' },
+                      xaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 }, title: { text: 'EPOCH', font: { size: 7, color: '#666' } } },
+                      yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 }, title: { text: 'LOSS', font: { size: 7, color: '#666' } } },
+                      legend: { orientation: 'h', y: 1.1, x: 0.5, xanchor: 'center', font: { size: 7, color: '#666' }, bgcolor: 'transparent' },
+                    }}
+                    config={{ displayModeBar: false }}
+                    style={{ width: '100%', height: '100%' }}
+                    useResizeHandler
+                  />
+                </div>
               )}
             </div>
           </div>
@@ -174,6 +242,15 @@ function ParamInput({ label, value, step, min, max, onChange }: {
     <div className="space-y-0.5">
       <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">{label}</label>
       <input type="number" className="blz-input w-full" value={value} step={step} min={min} max={max} onChange={e => onChange(Number(e.target.value))} />
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="font-mono text-[9px]">
+      <span className="text-[var(--grey)]">{label}: </span>
+      <span className="text-[var(--white)]">{value}</span>
     </div>
   )
 }
