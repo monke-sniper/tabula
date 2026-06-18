@@ -188,12 +188,33 @@ def run_forecast(session_id: str, body: ForecastRequestBody):
             "upper_90": round(float(history[i]), 6),
             "upper_97_5": round(float(history[i]), 6),
         })
+    # anchor: synthetic t=0 forecast point at the last historical timestamp
+    # with zero band width and a single iteration equal to the last actual.
+    # the fan emerges from this point and widens outward, matching the
+    # standard fan-chart convention (Bank of England / NY Times style).
+    anchor_ts = str(timestamps[split_point - 1])
+    anchor_val = round(float(history[-1]), 6)
+    rows.append({
+        "timestamp": anchor_ts,
+        "actual": None,
+        "is_forecast": True,
+        "iteration_values": [anchor_val],
+        "median": anchor_val,
+        "lower_2_5": anchor_val,
+        "lower_10": anchor_val,
+        "lower_25": anchor_val,
+        "upper_75": anchor_val,
+        "upper_90": anchor_val,
+        "upper_97_5": anchor_val,
+        "is_anchor": True,
+    })
     for h in range(body.horizon):
         actual = round(float(actuals[h]), 6) if h < len(actuals) else None
         rows.append({
             "timestamp": str(result.timestamps[h]) if h < len(result.timestamps) else f"t+{h+1}",
             "actual": actual,
             "is_forecast": True,
+            "is_anchor": False,
             "iteration_values": [round(float(v), 6) for v in result.iterations[h]],
             "median": round(float(result.median[h]), 6),
             "lower_2_5": round(float(result.lower_2_5[h]), 6),

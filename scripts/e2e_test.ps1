@@ -86,10 +86,31 @@ if (-not $script:sessionId) {
     $hc = ($j.results | Where-Object { -not $_.is_forecast }).Count
     Write-Host "  rows: $($j.results.Count) (h=$hc f=$fc), engine: $($j.engine), model: $($j.model_used), mae: $($j.metrics.mae), seasonality: $($j.seasonality.kind)/$($j.seasonality.period)"
     if ($hc + $fc -ne $j.results.Count) { throw "historical+forecast != total" }
-    $f = $j.results | Where-Object { $_.is_forecast } | Select-Object -First 1
+    $anchor = $j.results | Where-Object { $_.is_forecast -and $_.is_anchor } | Select-Object -First 1
+    $f = $j.results | Where-Object { $_.is_forecast -and -not $_.is_anchor } | Select-Object -First 1
     if ($f.iteration_values.Count -ne 20) { throw "iterations mismatch" }
     if ($null -eq $f.lower_2_5) { throw "missing lower_2_5" }
-    Write-Host "  first forecast ts: $($f.timestamp) median: $($f.median) [2.5%,97.5%]=[$($f.lower_2_5),$($f.upper_97_5)]"
+    if ($anchor.is_anchor -and $anchor.iteration_values.Count -ne 1) { throw "anchor should have 1 iter" }
+    if ($anchor.median -ne $anchor.lower_2_5) { throw "anchor lower_2_5 != median" }
+    Write-Host "  anchor ts: $($anchor.timestamp) median: $($anchor.median) [zero-width]"
+    Write-Host "  first fc ts: $($f.timestamp) median: $($f.median) [2.5%,97.5%]=[$($f.lower_2_5),$($f.upper_97_5)]"
+  }
+
+  Test-Step 'forecast-anchor' {
+    $body = @{ target_column = $tgt; horizon = 12; num_samples = 10; model_name = 'statistical-fallback' } | ConvertTo-Json
+    $h = Invoke-WebRequest -UseBasicParsing -Uri "$BASE/forecast/$sid" -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 30
+    if ($h.StatusCode -ne 200) { throw "status $($h.StatusCode)" }
+    $j = $h.Content | ConvertFrom-Json
+    # first forecast row must be the synthetic t=0 anchor
+    $anchor = $j.results | Where-Object { $_.is_forecast } | Select-Object -First 1
+    if (-not $anchor.is_anchor) { throw "first forecast row is_anchor flag missing" }
+    $lastHist = $j.results | Where-Object { -not $_.is_forecast } | Select-Object -Last 1
+    if ($null -eq $lastHist.actual) { throw "no historical data" }
+    if ([math]::Abs($anchor.median - $lastHist.actual) -gt 1e-3) { throw "anchor median ($($anchor.median)) != last actual ($($lastHist.actual))" }
+    if ([math]::Abs($anchor.lower_2_5 - $anchor.upper_97_5) -gt 1e-6) { throw "anchor must have zero band width, got [$($anchor.lower_2_5),$($anchor.upper_97_5)]" }
+    if ($anchor.iteration_values.Count -ne 1) { throw "anchor must have exactly 1 iteration, got $($anchor.iteration_values.Count)" }
+    if ($anchor.timestamp -ne $lastHist.timestamp) { throw "anchor ts ($($anchor.timestamp)) != last historical ts ($($lastHist.timestamp))" }
+    Write-Host "  anchor: ts=$($anchor.timestamp) value=$($anchor.median) [2.5%,97.5%]=[$($anchor.lower_2_5),$($anchor.upper_97_5)] (zero-width, single iter)"
   }
 
   Test-Step 'list-models' {

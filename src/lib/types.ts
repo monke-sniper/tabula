@@ -26,6 +26,7 @@ export interface ForecastResult {
   timestamp: string;
   actual: number | null;
   is_forecast: boolean;
+  is_anchor?: boolean;
   iteration_values: number[];
   median: number;
   lower_2_5: number;
