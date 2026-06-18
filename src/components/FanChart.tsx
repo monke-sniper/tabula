@@ -16,12 +16,17 @@ function useChartSkeleton(data: ForecastResponse) {
     return m
   }, [allTimestamps])
 
-  // Tick labels: show up to 12 evenly-spaced labels, shortened to HH:MM or YYYY-MM-DD
-  const tickStep = Math.max(1, Math.floor(allTimestamps.length / 12))
-  const tickVals = allTimestamps.map((_, i) => i).filter((_, i) => i % tickStep === 0)
-  const tickTexts = tickVals.map((i) => shortenTs(allTimestamps[i]))
-
-  return { allTimestamps, tsToIdx, tickVals, tickTexts }
+  // Memoize the returned object so dependents get a stable reference until
+  // the underlying data actually changes. Without this, tickVals / tickTexts
+  // are fresh arrays on every render, and `<Plot layout={...}>` sees a new
+  // layout object and resets the zoom on every parent re-render (e.g. the
+  // 10s health poll).
+  return useMemo(() => {
+    const tickStep = Math.max(1, Math.floor(allTimestamps.length / 12))
+    const tickVals = allTimestamps.map((_, i) => i).filter((_, i) => i % tickStep === 0)
+    const tickTexts = tickVals.map((i) => shortenTs(allTimestamps[i]))
+    return { allTimestamps, tsToIdx, tickVals, tickTexts }
+  }, [allTimestamps, tsToIdx])
 }
 
 function shortenTs(ts: string): string {
@@ -265,29 +270,40 @@ function originRule(forecast: ForecastResult[], tsToIdx: Map<string, number>): P
 /** Full fan chart: iterations + 50/80/95% bands + volume. Default view. */
 export function FanChart({ data }: FanChartProps) {
   const skeleton = useChartSkeleton(data)
-  const { hist, x: histX, y: histY } = historicalSeries(data, skeleton.tsToIdx)
-  const { forecast, x: fcX } = forecastSeries(data, skeleton.tsToIdx)
-  const traces: Plotly.Data[] = [
-    ...volumeTraces(histY),
-    ...ciBands(forecast, fcX),
-    ...iterationFan(forecast, fcX),
-    ...actualLine(histX, histY),
-    medianLine(forecast, fcX),
-  ]
-  const marker = actualMarkers(forecast, skeleton.tsToIdx)
-  if (marker) traces.push(marker)
+  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const traces = useMemo<Plotly.Data[]>(() => {
+    const t: Plotly.Data[] = [
+      ...volumeTraces(histY),
+      ...ciBands(forecast, fcX),
+      ...iterationFan(forecast, fcX),
+      ...actualLine(histX, histY),
+      medianLine(forecast, fcX),
+    ]
+    const marker = actualMarkers(forecast, skeleton.tsToIdx)
+    if (marker) t.push(marker)
+    return t
+  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
 
-  const rule = originRule(forecast, skeleton.tsToIdx)
-  const layout: Partial<Plotly.Layout> = {
-    ...baseLayout(skeleton, histY.length >= 2),
-    shapes: rule ? [rule] : [],
-  }
+  const layout = useMemo<Partial<Plotly.Layout>>(() => {
+    const rule = originRule(forecast, skeleton.tsToIdx)
+    return {
+      ...baseLayout(skeleton, histY.length >= 2),
+      shapes: rule ? [rule] : [],
+    }
+  }, [skeleton, histY.length, forecast, skeleton.tsToIdx])
+
+  // Stable references so the chart doesn't re-render on every parent update
+  // (e.g. the 10s health poll). Without this, Plotly resets the zoom.
+  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
+  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
+
   return (
     <Plot
       data={traces}
       layout={layout}
-      config={{ displayModeBar: false }}
-      style={{ width: '100%', height: '100%' }}
+      config={config}
+      style={style}
       useResizeHandler
     />
   )
@@ -296,26 +312,34 @@ export function FanChart({ data }: FanChartProps) {
 /** Bands-only view: 50/80/95% regions + median + actual. */
 export function BandsChart({ data }: FanChartProps) {
   const skeleton = useChartSkeleton(data)
-  const { x: histX, y: histY } = historicalSeries(data, skeleton.tsToIdx)
-  const { forecast, x: fcX } = forecastSeries(data, skeleton.tsToIdx)
-  const traces: Plotly.Data[] = [
-    ...ciBands(forecast, fcX),
-    ...actualLine(histX, histY),
-    medianLine(forecast, fcX),
-  ]
-  const marker = actualMarkers(forecast, skeleton.tsToIdx)
-  if (marker) traces.push(marker)
-  const rule = originRule(forecast, skeleton.tsToIdx)
-  const layout: Partial<Plotly.Layout> = {
-    ...baseLayout(skeleton, false),
-    shapes: rule ? [rule] : [],
-  }
+  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const traces = useMemo<Plotly.Data[]>(() => {
+    const t: Plotly.Data[] = [
+      ...ciBands(forecast, fcX),
+      ...actualLine(histX, histY),
+      medianLine(forecast, fcX),
+    ]
+    const marker = actualMarkers(forecast, skeleton.tsToIdx)
+    if (marker) t.push(marker)
+    return t
+  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
+  const layout = useMemo<Partial<Plotly.Layout>>(() => {
+    const rule = originRule(forecast, skeleton.tsToIdx)
+    return {
+      ...baseLayout(skeleton, false),
+      shapes: rule ? [rule] : [],
+    }
+  }, [skeleton, forecast, skeleton.tsToIdx])
+  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
+  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
+
   return (
     <Plot
       data={traces}
       layout={layout}
-      config={{ displayModeBar: false }}
-      style={{ width: '100%', height: '100%' }}
+      config={config}
+      style={style}
       useResizeHandler
     />
   )
@@ -324,25 +348,33 @@ export function BandsChart({ data }: FanChartProps) {
 /** Lines-only view: actual + median + origin rule. Fastest. */
 export function LinesChart({ data }: FanChartProps) {
   const skeleton = useChartSkeleton(data)
-  const { x: histX, y: histY } = historicalSeries(data, skeleton.tsToIdx)
-  const { forecast, x: fcX } = forecastSeries(data, skeleton.tsToIdx)
-  const traces: Plotly.Data[] = [
-    ...actualLine(histX, histY),
-    medianLine(forecast, fcX),
-  ]
-  const marker = actualMarkers(forecast, skeleton.tsToIdx)
-  if (marker) traces.push(marker)
-  const rule = originRule(forecast, skeleton.tsToIdx)
-  const layout: Partial<Plotly.Layout> = {
-    ...baseLayout(skeleton, false),
-    shapes: rule ? [rule] : [],
-  }
+  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
+  const traces = useMemo<Plotly.Data[]>(() => {
+    const t: Plotly.Data[] = [
+      ...actualLine(histX, histY),
+      medianLine(forecast, fcX),
+    ]
+    const marker = actualMarkers(forecast, skeleton.tsToIdx)
+    if (marker) t.push(marker)
+    return t
+  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
+  const layout = useMemo<Partial<Plotly.Layout>>(() => {
+    const rule = originRule(forecast, skeleton.tsToIdx)
+    return {
+      ...baseLayout(skeleton, false),
+      shapes: rule ? [rule] : [],
+    }
+  }, [skeleton, forecast, skeleton.tsToIdx])
+  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
+  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
+
   return (
     <Plot
       data={traces}
       layout={layout}
-      config={{ displayModeBar: false }}
-      style={{ width: '100%', height: '100%' }}
+      config={config}
+      style={style}
       useResizeHandler
     />
   )
