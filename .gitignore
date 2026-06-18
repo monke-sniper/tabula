@@ -18,10 +18,10 @@ backend/models/
 Thumbs.db
 test_data.csv
 
-# generated screenshots / one-off artifacts
+# throwaway captures and one-off artifacts (legit README assets are committed explicitly)
 screenshots/
-screenshot_*.png
-screenshot_*.jpg
+tmp_capture_*.png
+tmp_*.png
 
 # editor
 .vscode/
