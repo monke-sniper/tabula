@@ -61,11 +61,13 @@ Each EDA tab has its own help description, a `?` tooltip, and per-column action 
 
 ### Help system
 
-| Top bar `?` button | Global help modal |
-|:---:|:---:|
-| `?` in the dashboard top bar, or press `?` / `Shift+/` from anywhere | ![](screenshot_help.png) |
+Click `?` in the top bar (top-right), or press `?` / `Shift+/` from anywhere, to open the global help modal:
 
-The help modal has 8 sections: keyboard shortcuts, EDA panel, forecast engine, advanced sampling, models, fine-tune, supported file formats, and API endpoints. Dismissable with `Esc` or click-outside.
+| `?` button in top bar | Global help modal |
+|:---:|:---:|
+| ![](screenshot_help_trigger.png) | ![](screenshot_help.png) |
+
+The help modal has 8 sections: keyboard shortcuts, EDA panel, forecast engine, advanced sampling, models, fine-tune, supported file formats, and API endpoints. Dismissable with `Esc` or click-outside. Plus, every EDA tab, forecast control, fine-tune hyperparameter, and sidebar label has its own `?` popover with a one-line description.
 
 ### Fine-Tune
 
