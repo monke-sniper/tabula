@@ -2,7 +2,7 @@
 
 # Tabula
 
-**Model-agnostic forecasting desktop app with a trading terminal aesthetic.**
+**Model-agnostic forecasting app with a trading terminal aesthetic.**
 
 [![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
