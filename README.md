@@ -1,251 +1,154 @@
+<div align="center">
+
 # Tabula
 
-Model-agnostic time series forecasting desktop app. Upload any dataset, explore patterns with a built-in EDA suite, generate probability-weighted fan charts, and fine-tune your own models — all locally.
+**Model-agnostic forecasting desktop app with a trading terminal aesthetic.**
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Chronos](https://img.shields.io/badge/Chronos-2.2-FF8800)](https://github.com/amazon-science/chronos-forecasting)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.11-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  TABULA                         F1 DASHBOARD  F2 FINE-TUNE  F3 MODELS │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─── DATA PREVIEW ──────────────┐  ┌─── EDA ──────────────────┐│
-│  │  timestamp  │  value          │  │  [STATS] [DIST] [CORR]   ││
-│  │  2024-01-01 │  142.30         │  │  mean:  145.2            ││
-│  │  2024-01-02 │  138.90         │  │  std:    12.4            ││
-│  │  2024-01-03 │  151.20         │  │  min:    98.1            ││
-│  │  ...        │  ...            │  │  max:   201.5            ││
-│  └────────────────────────────────┘  └──────────────────────────┘│
-│                                                                  │
-│  ┌─── FORECAST ENGINE ──────────────────────────────────────────┐│
-│  │  TGT [AUTO]  ITER [====o== 12]  HORIZON [====o== 24] [RUN]  ││
-│  │                                                              ││
-│  │        ╭───────── Fan chart: dashed iterations, solid median  ││
-│  │   ─────┤                                                      ││
-│  │        ╰───────── 50% and 80% confidence bands               ││
-│  └──────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────┘
-```
+Upload data → Explore patterns → Forecast with probability-weighted fan charts → Fine-tune custom models.
 
-## What it does
+</div>
 
-**Data ingestion** — Drop a CSV, JSON, Excel, or Parquet file. Tabula parses it, detects column types, and loads it into an in-memory session.
+---
 
-**Exploratory data analysis** — Five tabs of analysis on your data: summary statistics, distributions, correlation matrix, missing value audit, and outlier detection (IQR + Z-score).
+## Features
 
-**Forecasting** — Run N iterations of a probabilistic forecast (powered by [Chronos-2](https://github.com/AmazonScience/chronos-forecasting) by default). Each iteration is a separate sample from the model's predictive distribution. Iterations are ranked by distance from the median — least probable rendered first (faint), most probable on top (bright). Confidence bands at 50% and 80%.
+| Feature | Description |
+|---------|-------------|
+| **File Upload** | Drag-and-drop or file picker for CSV, JSON, Excel, Parquet; keyboard shortcut `Ctrl+O` |
+| **Load Sample** | One-click `test_data.csv` loader from the empty dashboard |
+| **EDA Suite** | Stats, distributions (with mean/σ overlay), correlations, missing values, IQR outliers |
+| **EDA Clean** | Per-column `FILL` / `DROP` / `FILL MEAN` actions wired to `/data/clean` |
+| **Real Chronos forecasts** | `amazon/chronos-t5-*`, `amazon/chronos-bolt-*`, `google/timesfm-*` via `ChronosPipeline` |
+| **Fan chart** | 50/80/95% nested cyan CI bands + Gaussian-opacity iteration fan + orange median |
+| **Multiple views** | `FAN` (default), `BANDS`, `LINES` — switchable from the engine control bar |
+| **Seasonality detection** | Auto-detects hourly (24), daily (7), weekly (52), monthly (12) periods |
+| **Statistical fallback** | Seasonal-naive + linear trend + MC bootstrap, used when no Chronos model is selected |
+| **Sampling controls** | `SAMPLES` (2–200), `HORIZON` (1–500), `T` (temperature), `TOP_P`, `TOP_K` |
+| **Fine-Tuning** | PyTorch LSTM via background thread; loss curve chart, ETA, device display |
+| **Model Registry** | Save, list, select, **use**, **delete** custom models; engine-tagged rows |
+| **Active model sync** | Selecting a model on the Models page immediately updates the engine dropdown |
+| **Session management** | `GET /sessions` lists active sessions; `DELETE /sessions/{id}` cleans file + memory |
+| **Health probe** | `GET /health` polled every 10s; sidebar + top bar status dot driven by it |
+| **Toast bus** | Dark terminal-styled toasts for upload / forecast / training / clean events |
+| **Keyboard shortcuts** | `F1`/`F2`/`F3` to switch pages, `Ctrl+O` to open file picker |
+| **Trading Terminal UI** | Dark interface with monospace data, amber/cyan accents, Bloomberg-style density |
 
-**Fine-tuning** — Train an LSTM on your historical data with configurable hyperparameters (lookback, hidden size, dropout, learning rate, epochs). Models are saved to a local registry.
+## Quick Start
 
-**Model registry** — List saved models, see metadata, and switch the active model with one click.
-
-## Prerequisites
+### Prerequisites
 
 - **Node.js** 18+ and **npm**
-- **Python** 3.10+ with `pip`
-- **Git**
+- **Python** 3.10+ with pip
+- A C++ build toolchain (needed by `tokenizers`/`safetensors` on first install)
 
-## Install
+### Install
 
 ```bash
 git clone https://github.com/monke-sniper/tabula.git
 cd tabula
+
+# Frontend
 npm install
-pip install -r backend/requirements.txt
+
+# Backend (creates .venv automatically if missing)
+cd backend
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt     # Windows
+# source .venv/bin/activate && pip install -r requirements.txt   # Unix
+cd ..
 ```
 
-## Running
-
-You need two terminals — one for the Python backend, one for the frontend.
+### Run
 
 ```bash
-# Terminal 1 — Python backend (port 8420)
-npm run backend
+# One-shot dev launcher (handy on Windows)
+npm start
 
-# Terminal 2 — Vite dev server (port 5173)
-npm run dev
+# Or run them separately:
+npm run backend        # uvicorn on :8420
+npm run dev            # vite on :5173
+npm run electron:dev   # electron desktop
 ```
 
-Then open **http://localhost:5173**.
+Open **http://localhost:5173**.
 
-Or run in Electron desktop mode:
+> **First-run note:** the default Chronos model (`amazon/chronos-t5-small`) downloads
+> from HuggingFace on first startup (~250MB cached in `~/.cache/huggingface/`).
+> The backend pre-warms it in a daemon thread so the first request is fast.
 
-```bash
-# Single command — launches both backend and Electron window
-npm run electron:dev
-```
+## Usage
 
-## Step-by-step walkthrough
-
-### 1. Upload data
-
-Drag and drop any CSV, JSON, Excel (.xlsx), or Parquet file onto the upload zone. Tabula will:
-
-- Parse the file and detect column types (numeric, datetime, categorical)
-- Show a data preview table
-- Make columns available for EDA and forecasting
-
-You can also upload by file path using the API:
-
-```bash
-curl -X POST http://127.0.0.1:8420/upload-path \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "/path/to/your/data.csv"}'
-```
-
-### 2. Explore the data
-
-Switch between five EDA tabs to understand your data:
-
-| Tab | What it shows |
-|-----|---------------|
-| **Stats** | Count, mean, std, min, quartiles, max for each numeric column |
-| **Distributions** | Histograms with bin count sliders |
-| **Correlations** | Heatmap of Pearson correlations between numeric columns |
-| **Missing** | Per-column missing value counts and percentages |
-| **Outliers** | IQR-based and Z-score outlier detection with counts |
-
-### 3. Run a forecast
-
-In the forecast panel:
-
-1. **TGT** — Select a target column (or leave on AUTO to use the first numeric column)
-2. **ITER** — Number of forecast iterations (2-50). More iterations = denser fan chart = better uncertainty quantification
-3. **HORIZON** — How many steps ahead to predict
-4. Click **RUN**
-
-The chart shows:
-
-- **Solid cyan line** — Historical data
-- **Dashed amber lines** — Forecast iterations (opacity = probability)
-- **Bright dashed amber line** — Median forecast
-- **Cyan shaded regions** — 50% and 80% confidence intervals
-- **Bottom bars** — Volume/change magnitude
-
-To cancel a running forecast, click **STOP**.
-
-### 4. Fine-tune a model
-
-Navigate to the **Fine-Tune** page (F2). Configure:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Lookback window | 30 | Number of historical steps the model sees |
-| Hidden size | 64 | LSTM hidden layer dimension |
-| Dropout | 0.1 | Regularization dropout rate |
-| Learning rate | 0.001 | Adam optimizer learning rate |
-| Epochs | 50 | Training iterations over the full dataset |
-| Batch size | 32 | Samples per training step |
-
-Click **START TRAINING** to begin. Progress updates in real time.
-
-### 5. Switch models
-
-Go to the **Models** page (F3) to:
-
-- See all registered models with metadata
-- Set any model as the **ACTIVE** model
-- View model details
-
-## API reference
-
-The backend runs on `http://127.0.0.1:8420` by default.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/upload` | Upload a data file (multipart/form-data) |
-| `POST` | `/upload-path` | Upload by local file path |
-| `GET` | `/eda/{session_id}` | Run EDA analysis on uploaded data |
-| `POST` | `/forecast/{session_id}` | Run multi-iteration forecast |
-| `POST` | `/forecast/cancel` | Cancel a running forecast |
-| `POST` | `/finetune/start` | Start a fine-tuning job |
-| `GET` | `/finetune/status` | Poll training progress |
-| `GET` | `/models` | List registered models |
-| `PUT` | `/models/active` | Set the active model |
-| `GET` | `/health` | Health check |
-
-### Forecast parameters
-
-```
-POST /forecast/{session_id}?iterations=12&prediction_length=24&target_column=value
-```
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `iterations` | int | 12 | Number of sample iterations |
-| `prediction_length` | int | 24 | Forecast horizon (steps ahead) |
-| `target_column` | string | first numeric column | Column to forecast |
-
-### Forecast cancel
-
-```bash
-curl -X POST http://127.0.0.1:8420/forecast/cancel
-```
-
-Returns HTTP 499 when the forecast was cancelled.
+1. **Upload** — drag a CSV/JSON/Excel/Parquet file onto the upload zone, or `Ctrl+O`.
+2. **Explore** — switch the EDA tabs (`STATS`, `DIST`, `CORR`, `NULL`, `OUT`).
+3. **Clean** (optional) — in `NULL` or `OUT`, click `FILL` / `DROP` / `FILL MEAN` per column.
+4. **Forecast** — set `TGT`, `MODEL`, `SAMPLES`, `HORIZON`, choose a `VIEW` (Fan/Bands/Lines), click `RUN`.
+5. **Fine-Tune** — go to `Fine-Tune`, set a name, click `START TRAINING`. Watch the loss curve.
+6. **Switch Models** — on `Models`, click `USE` to make a model active and bounce back to the dashboard.
 
 ## Architecture
 
 ```
 tabula/
-├── electron/                  # Electron main process
-│   ├── main.js               # Window management, Python subprocess bridge
-│   └── preload.js            # Context bridge for renderer
-├── src/                       # React frontend
-│   ├── components/
-│   │   ├── Sidebar.tsx       # Navigation + model status
-│   │   ├── FileUpload.tsx    # Drag-drop file upload
-│   │   ├── DataTable.tsx     # Paginated data preview
-│   │   ├── EDAPanel.tsx      # 5-tab EDA analysis
-│   │   └── ForecastChart.tsx # Fan chart + confidence bands + cancel
-│   ├── pages/
-│   │   ├── Dashboard.tsx     # Main view (fixed grid, no scroll)
-│   │   ├── FineTune.tsx      # Training pipeline
-│   │   └── Models.tsx        # Model registry
-│   └── lib/
-│       ├── api.ts            # API client
-│       ├── context.tsx       # Global state
-│       └── types.ts          # TypeScript types
-├── backend/                   # Python FastAPI
-│   ├── main.py               # App entry, CORS, health check
-│   ├── routers/
-│   │   ├── data.py           # Upload + EDA
-│   │   ├── forecast.py       # Multi-iteration forecast + cancel
-│   │   └── finetune.py       # Training pipeline + model registry
-│   └── models/               # Saved fine-tuned models
-└── package.json
+├── electron/                 Electron main + preload
+├── scripts/                  Dev launcher + e2e tests
+│   ├── start.mjs             unified backend+frontend launcher
+│   ├── boot_test.ps1         boots uvicorn, dumps all OpenAPI routes
+│   └── e2e_test.ps1          13-step E2E suite (multipart upload, EDA,
+│                             statistical+chronos forecast, finetune, etc.)
+├── backend/
+│   ├── main.py               FastAPI app + lifespan warmup
+│   ├── services/
+│   │   └── forecaster.py     Chronos + statistical engines
+│   └── routers/              data / forecast / finetune
+└── src/                      React frontend
+    ├── components/           Sidebar, FileUpload, DataTable, EDAPanel,
+    │                          FanChart, ForecastChart, Toaster,
+    │                          KeyboardShortcuts
+    ├── pages/                Dashboard / FineTune / Models
+    └── lib/                  api, context, toast, types
 ```
 
-## Tech stack
+## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+|-------|------------|
 | **Desktop** | Electron 33 |
-| **Frontend** | React 19 · TypeScript 5.7 · Vite 6 · Tailwind CSS 3 |
-| **Charts** | Plotly.js |
+| **Frontend** | React 19 · TypeScript 5.7 · Vite 6 · Tailwind 3 |
+| **Charts** | Plotly.js (via react-plotly.js) |
 | **Backend** | Python FastAPI · uvicorn |
 | **Data** | pandas · pyarrow · openpyxl |
-| **ML** | PyTorch · Transformers (Chronos-2) |
+| **Forecast** | `chronos-forecasting` 2.2 (Amazon Chronos T5/Bolt + Google TimesFM) |
+| **ML** | PyTorch · transformers · accelerate |
 
-## Development
+## API Endpoints
 
-```bash
-# Lint
-npm run lint
-
-# Type check
-npx tsc --noEmit
-
-# Build for production
-npx vite build
-
-# Run backend only (for API development)
-cd backend && python -m uvicorn main:app --reload --port 8420
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/` | service info |
+| `GET`  | `/health` | liveness + loaded model list |
+| `POST` | `/upload` | upload data file (multipart) |
+| `POST` | `/upload-path` | upload by local file path (used by "Load Sample") |
+| `GET`  | `/eda/{session_id}` | column info, distributions, correlations, missing, outliers |
+| `POST` | `/forecast/{session_id}` | run N-sample forecast (body: model_name, horizon, num_samples, top_p, top_k, temperature) |
+| `POST` | `/forecast/cancel` | cancel in-flight forecast (returns 200) |
+| `POST` | `/finetune/start` | start training (LSTM in daemon thread) |
+| `GET`  | `/finetune/status` | poll training status + loss |
+| `GET`  | `/finetune/loss-history` | per-step loss history for the chart |
+| `GET`  | `/models` | list registered custom models + active |
+| `PUT`  | `/models/active` | set the active model name |
+| `DELETE` | `/models/{name}` | delete a custom model + its directory |
+| `GET`  | `/sessions` | list active sessions with age |
+| `DELETE` | `/sessions/{id}` | clean session (file + memory) |
+| `POST` | `/sessions/{id}/clean` | apply a cleaning strategy (`drop`/`mean`/`zero`/`ffill`) |
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+MIT
