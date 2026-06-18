@@ -16,6 +16,16 @@ Upload data → Explore patterns → Forecast with probability-weighted fan char
 
 </div>
 
+### Screenshots
+
+| Dashboard (empty) | After data upload |
+|:---:|:---:|
+| ![](screenshot_main.png) | ![](screenshot_uploaded.png) |
+
+| Forecast with fan chart | Fine-Tune page | Models page |
+|:---:|:---:|:---:|
+| ![](screenshot_forecast.png) | ![](screenshot_finetune.png) | ![](screenshot_models.png) |
+
 ---
 
 ## Features
