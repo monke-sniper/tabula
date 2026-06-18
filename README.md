@@ -11,7 +11,7 @@
 [![Chronos](https://img.shields.io/badge/Chronos-2.2-FF8800)](https://github.com/amazon-science/chronos-forecasting)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.11-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Demo](https://img.shields.io/badge/Demo-Watch_▶-FF8800)](tabula_demo.mp4)
+[![Demo](https://img.shields.io/badge/Demo-Watch_▶-FF8800)](https://raw.githubusercontent.com/monke-sniper/tabula/master/tabula_demo.mp4)
 
 Upload data → Explore patterns → Forecast with probability-weighted fan charts → Fine-tune custom models.
 
@@ -27,7 +27,7 @@ Upload data → Explore patterns → Forecast with probability-weighted fan char
 |:---:|:---:|:---:|
 | ![](screenshot_forecast.png) | ![](screenshot_finetune.png) | ![](screenshot_models.png) |
 
-<video src="tabula_demo.mp4" controls width="100%"></video>
+[▶ Click to watch full demo](tabula_demo.mp4)
 
 ---
 
