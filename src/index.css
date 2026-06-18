@@ -206,11 +206,87 @@ body {
   animation: blink 1.5s ease-in-out infinite;
 }
 
-@keyframes ticker-scroll {
-  0% { transform: translateX(100%); }
-  100% { transform: translateX(-100%); }
+@keyframes toast-in {
+  from { transform: translateX(8px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
-.ticker-scroll {
-  animation: ticker-scroll 30s linear infinite;
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0%; }
 }
+
+.toast-stack {
+  position: fixed;
+  bottom: 36px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
+  pointer-events: none;
+  max-width: 360px;
+}
+
+.blz-toast {
+  pointer-events: auto;
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  padding: 6px 8px 8px;
+  min-width: 240px;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+  animation: toast-in 160ms ease-out;
+  overflow: hidden;
+}
+
+.blz-toast-info { border-left: 2px solid var(--cyan); }
+.blz-toast-success { border-left: 2px solid var(--green); }
+.blz-toast-error { border-left: 2px solid var(--red); }
+.blz-toast-warn { border-left: 2px solid var(--amber); }
+
+.blz-toast-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.blz-toast-title {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--white);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blz-toast-x {
+  font-size: 11px;
+  color: var(--grey-dim);
+  line-height: 1;
+}
+
+.blz-toast-body {
+  font-size: 8px;
+  color: var(--grey);
+  margin-top: 3px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.blz-toast-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--amber);
+  animation: toast-progress linear forwards;
+  animation-duration: 4000ms;
+}
+
+.blz-toast-success .blz-toast-progress { background: var(--green); }
+.blz-toast-error .blz-toast-progress { background: var(--red); }
+.blz-toast-info .blz-toast-progress { background: var(--cyan); }
+.blz-toast-warn .blz-toast-progress { background: var(--amber); }

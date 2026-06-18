@@ -3,6 +3,8 @@ import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import FineTune from './pages/FineTune'
 import Models from './pages/Models'
+import { Toaster } from './components/Toaster'
+import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
             <Route path="/models" element={<Models />} />
           </Routes>
         </main>
+        <Toaster />
+        <KeyboardShortcuts />
       </div>
     </BrowserRouter>
   )

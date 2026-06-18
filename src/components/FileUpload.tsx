@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react'
-import { apiUpload, apiFetch } from '../lib/api'
+import { apiUpload, apiGet } from '../lib/api'
 import { useApp } from '../lib/context'
-import type { UploadResponse } from '../lib/types'
+import { useToast } from '../lib/toast'
+import type { UploadResponse, EDAStats } from '../lib/types'
 
 export default function FileUpload() {
   const [isDragOver, setIsDragOver] = useState(false)
@@ -9,6 +10,7 @@ export default function FileUpload() {
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const { setUploadData, setSessionId, setEDAStats, uploadData } = useApp()
+  const toast = useToast()
 
   const handleFile = useCallback(async (file: File) => {
     setIsLoading(true)
@@ -17,14 +19,23 @@ export default function FileUpload() {
       const result = await apiUpload<UploadResponse>('/upload', file)
       setUploadData(result)
       setSessionId(result.session_id)
-      const eda = await apiFetch<any>(`/eda/${result.session_id}`)
-      setEDAStats(eda)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      try {
+        const eda = await apiGet<EDAStats>(`/eda/${result.session_id}`)
+        setEDAStats(eda)
+      } catch (e: any) {
+        toast('warn', 'EDA partial', e?.message ?? 'EDA fetch failed')
+      }
+      toast('success', 'Loaded', `${result.rows.toLocaleString()} rows · ${result.columns} cols`)
+    } catch (err: any) {
+      const msg = err?.message ?? 'Upload failed'
+      setError(msg)
+      toast('error', 'Upload failed', msg)
     } finally {
       setIsLoading(false)
     }
-  }, [setUploadData, setSessionId, setEDAStats])
+  }, [setUploadData, setSessionId, setEDAStats, toast])
+
+  useEffectBridge(handleFile)
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -48,6 +59,13 @@ export default function FileUpload() {
     if (file) handleFile(file)
   }, [handleFile])
 
+  const clear = useCallback(() => {
+    setUploadData(null)
+    setSessionId(null)
+    setEDAStats(null)
+    toast('info', 'Session cleared')
+  }, [setUploadData, setSessionId, setEDAStats, toast])
+
   if (uploadData) {
     return (
       <div className="blz-panel">
@@ -58,10 +76,16 @@ export default function FileUpload() {
           </div>
           <div className="flex items-center gap-3">
             <span className="font-mono text-[9px] text-[var(--grey)]">
-              {uploadData.rows.toLocaleString()} rows × {uploadData.columns} cols
+              {uploadData.rows.toLocaleString()} rows · {uploadData.columns} cols
             </span>
             <button
-              onClick={() => { setUploadData(null); setSessionId(null); setEDAStats(null) }}
+              onClick={() => inputRef.current?.click()}
+              className="font-mono text-[9px] text-[var(--cyan)] hover:text-[var(--cyan)] font-bold uppercase tracking-wider"
+            >
+              + ADD
+            </button>
+            <button
+              onClick={clear}
               className="text-[9px] text-[var(--red)] hover:text-[var(--red)] font-bold uppercase tracking-wider"
             >
               CLR
@@ -75,6 +99,13 @@ export default function FileUpload() {
             </span>
           ))}
         </div>
+        <input
+          ref={inputRef}
+          type="file"
+          className="hidden"
+          accept=".csv,.json,.xlsx,.xls,.parquet"
+          onChange={onFileSelect}
+        />
       </div>
     )
   }
@@ -114,6 +145,8 @@ export default function FileUpload() {
             </div>
             <span className="text-[8px] text-[var(--grey-dim)]">|</span>
             <span className="font-mono text-[9px] text-[var(--grey)]">CSV · JSON · XLSX · PARQUET</span>
+            <span className="text-[8px] text-[var(--grey-dim)]">|</span>
+            <span className="font-mono text-[9px] text-[var(--grey)]">OR CLICK TO BROWSE</span>
           </>
         )}
       </div>
@@ -122,4 +155,16 @@ export default function FileUpload() {
       )}
     </div>
   )
+}
+
+import { useEffect } from 'react'
+function useEffectBridge(handle: (f: File) => void) {
+  useEffect(() => {
+    const onShortcut = (e: Event) => {
+      const ce = e as CustomEvent<File>
+      if (ce.detail) handle(ce.detail)
+    }
+    window.addEventListener('tabula:file-shortcut', onShortcut)
+    return () => window.removeEventListener('tabula:file-shortcut', onShortcut)
+  }, [handle])
 }

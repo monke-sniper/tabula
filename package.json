@@ -8,9 +8,14 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "start": "node scripts/start.mjs",
+    "all": "concurrently -k -n BACKEND,FRONTEND -c yellow,cyan \"npm:backend\" \"npm:dev\"",
+    "typecheck": "tsc --noEmit",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run build && electron-builder",
-    "backend": "cd backend && python -m uvicorn main:app --port 8420 --reload"
+    "backend": "cd backend && .venv\\Scripts\\python.exe -m uvicorn main:app --port 8420 --reload",
+    "backend:dev": "cd backend && .venv\\Scripts\\python.exe -m uvicorn main:app --port 8420 --reload",
+    "frontend:dev": "vite"
   },
   "dependencies": {
     "react": "^19.0.0",

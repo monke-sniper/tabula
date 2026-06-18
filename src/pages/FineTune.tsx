@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { apiFetch } from '../lib/api'
+import { apiGet, apiPost } from '../lib/api'
 import { useApp } from '../lib/context'
+import { useToast } from '../lib/toast'
 import type { FineTuneConfig, FineTuneStatus } from '../lib/types'
 
 const BASE_MODELS = [
@@ -13,7 +14,8 @@ const BASE_MODELS = [
 ]
 
 export default function FineTune() {
-  const { uploadData, sessionId } = useApp()
+  const { uploadData, sessionId, refreshModels } = useApp()
+  const toast = useToast()
   const [config, setConfig] = useState<FineTuneConfig>({
     model_name: 'amazon/chronos-t5-small',
     custom_name: '',
@@ -33,7 +35,7 @@ export default function FineTune() {
 
   const pollStatus = useCallback(async () => {
     try {
-      const s = await apiFetch<FineTuneStatus>('/finetune/status')
+      const s = await apiGet<FineTuneStatus>('/finetune/status')
       setStatus(s)
       if (s.status === 'completed' || s.status === 'error') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -47,15 +49,24 @@ export default function FineTune() {
     if (!sessionId || !config.custom_name.trim()) return
     setStatus(prev => ({ ...prev, status: 'training', message: 'Starting...' }))
     try {
-      await apiFetch('/finetune/start', {
-        method: 'POST',
-        body: JSON.stringify({ session_id: sessionId, ...config }),
-      })
+      await apiPost('/finetune/start', { session_id: sessionId, ...config })
       pollRef.current = setInterval(pollStatus, 2000)
+      toast('info', 'Training started', config.custom_name)
     } catch (err: unknown) {
-      setStatus(prev => ({ ...prev, status: 'error', message: err instanceof Error ? err.message : 'Failed' }))
+      const msg = err instanceof Error ? err.message : 'Failed'
+      setStatus(prev => ({ ...prev, status: 'error', message: msg }))
+      toast('error', 'Training failed', msg)
     }
   }
+
+  useEffect(() => {
+    if (status.status === 'completed') {
+      refreshModels()
+      toast('success', 'Training complete', `model saved: ${config.custom_name}`)
+    } else if (status.status === 'error') {
+      toast('error', 'Training error', status.message)
+    }
+  }, [status.status, refreshModels, toast, config.custom_name, status.message])
 
   return (
     <div className="h-full flex flex-col">
