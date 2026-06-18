@@ -1,4 +1,5 @@
 import logging
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,15 +14,26 @@ logging.basicConfig(
 )
 
 _loaded_models: set[str] = set()
+_main_log = logging.getLogger("tabula.main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Pre-warm the default chronos model so the first forecast is fast.
     try:
-        fc.warmup_default_models("amazon/chronos-t5-small")
+        thread = fc.warmup_default_models("amazon/chronos-t5-small")
+
+        def _watch():
+            thread.join(timeout=600)
+            if thread.is_alive():
+                _main_log.warning("chronos warmup did not complete within 600s")
+            else:
+                _loaded_models.add("amazon/chronos-t5-small")
+                _main_log.info("chronos model ready: amazon/chronos-t5-small")
+
+        threading.Thread(target=_watch, daemon=True, name="warmup-watcher").start()
     except Exception as e:  # pragma: no cover
-        logging.getLogger("tabula.main").warning("warmup spawn failed: %s", e)
+        _main_log.warning("warmup spawn failed: %s", e)
     yield
 
 

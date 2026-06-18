@@ -7,10 +7,21 @@ __pycache__/
 sessions/
 models/*.pt
 models/registry.json
+.venv/
 
 .env
 .vite/
 *.log
+*.err
 .DS_Store
 Thumbs.db
 test_data.csv
+
+# generated screenshots / one-off artifacts
+screenshot_*.png
+screenshot_*.jpg
+
+# editor
+.vscode/
+.idea/
+*.swp

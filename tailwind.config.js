@@ -7,14 +7,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: '#0d1117',
-        card: '#161b22',
-        border: '#30363d',
-        accent: '#58a6ff',
-        success: '#3fb950',
-        danger: '#f85149',
-        muted: '#8b949e',
-        text: '#e6edf3',
+        amber: 'var(--amber)',
+        cyan: 'var(--cyan)',
+        green: 'var(--green)',
+        red: 'var(--red)',
+        blue: 'var(--blue)',
+        bg: {
+          primary: 'var(--bg-primary)',
+          secondary: 'var(--bg-secondary)',
+          tertiary: 'var(--bg-tertiary)',
+          elevated: 'var(--bg-elevated)',
+          panel: 'var(--bg-panel)',
+        },
+        border: {
+          DEFAULT: 'var(--border)',
+          bright: 'var(--border-bright)',
+          dim: 'var(--border-dim)',
+        },
+        white: 'var(--white)',
+        grey: {
+          DEFAULT: 'var(--grey)',
+          dim: 'var(--grey-dim)',
+          bright: 'var(--grey-bright)',
+        },
       },
     },
   },

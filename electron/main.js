@@ -10,7 +10,12 @@ const BACKEND_DIR = path.join(__dirname, '..', 'backend');
 
 function startPythonBackend() {
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-  pythonProcess = spawn(pythonCmd, [
+  const venvPy = process.platform === 'win32'
+    ? path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
+    : path.join(BACKEND_DIR, '.venv', 'bin', 'python');
+  const fs = require('fs');
+  const cmd = fs.existsSync(venvPy) ? venvPy : pythonCmd;
+  pythonProcess = spawn(cmd, [
     '-m', 'uvicorn', 'main:app',
     '--port', String(BACKEND_PORT),
     '--host', '127.0.0.1',
@@ -25,6 +30,9 @@ function startPythonBackend() {
     console.log('[Python]', msg);
     if (mainWindow && msg.includes('Uvicorn running')) {
       mainWindow.webContents.send('backend-ready');
+    }
+    if (mainWindow && msg.includes('chronos model ready')) {
+      mainWindow.webContents.send('model-warmed');
     }
   });
 
