@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useApp } from '../lib/context'
+import { HelpTip } from './HelpTip'
 
 export default function Sidebar() {
   const { activeModel, sessionId, health, models } = useApp()
@@ -15,10 +16,11 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 py-1">
-        {navItems.map(({ to, label, shortcut }) => (
+        {navItems.map(({ to, label, shortcut, tip }) => (
           <NavLink
             key={to}
             to={to}
+            title={tip}
             className={({ isActive }) =>
               `flex items-center justify-between px-3 py-1.5 text-[10px] font-medium transition-all ${
                 isActive
@@ -37,7 +39,7 @@ export default function Sidebar() {
 
       <div className="px-3 py-2 space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">Model</span>
+          <span className="text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">Model<HelpTip text="The currently active forecaster. Set this on the Models page (USE / SELECT) or by selecting it in the Forecast Engine MODEL dropdown." /></span>
           {sessionId && <div className="w-1.5 h-1.5 rounded-full bg-[var(--green)] blink" />}
         </div>
         <div className="font-mono text-[9px] text-[var(--amber)] truncate bg-[var(--bg-primary)] px-2 py-1 border border-[var(--border)]" title={activeModel}>
@@ -51,7 +53,7 @@ export default function Sidebar() {
       </div>
 
       <div className="border-t border-[var(--border)] px-3 py-1.5 flex items-center justify-between">
-        <span className="text-[8px] text-[var(--grey-dim)] font-mono">SYS</span>
+        <span className="text-[8px] text-[var(--grey-dim)] font-mono">SYS<HelpTip text="Backend health. Polled every 10s. Green = connected, red = unreachable. If red, the dashboard can't fetch data or run forecasts." /></span>
         <div className="flex items-center gap-1.5">
           <div className={`w-1 h-1 rounded-full ${healthy ? 'bg-[var(--green)]' : 'bg-[var(--red)]'}`} />
           <span className={`text-[8px] font-mono ${healthy ? 'text-[var(--green)]' : 'text-[var(--red)]'}`}>
@@ -64,7 +66,7 @@ export default function Sidebar() {
 }
 
 const navItems = [
-  { to: '/', label: 'Dashboard', shortcut: 'F1' },
-  { to: '/finetune', label: 'Fine-Tune', shortcut: 'F2' },
-  { to: '/models', label: 'Models', shortcut: 'F3' },
+  { to: '/', label: 'Dashboard', shortcut: 'F1', tip: 'Upload data, run forecasts, view EDA, see fan chart' },
+  { to: '/finetune', label: 'Fine-Tune', shortcut: 'F2', tip: 'Train a custom LSTM head on a frozen pretrained base model' },
+  { to: '/models', label: 'Models', shortcut: 'F3', tip: 'Register, activate, or delete fine-tuned custom models' },
 ]

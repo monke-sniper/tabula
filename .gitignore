@@ -7,6 +7,7 @@ __pycache__/
 sessions/
 models/*.pt
 models/registry.json
+backend/models/
 .venv/
 
 .env
@@ -18,6 +19,7 @@ Thumbs.db
 test_data.csv
 
 # generated screenshots / one-off artifacts
+screenshots/
 screenshot_*.png
 screenshot_*.jpg
 

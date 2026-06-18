@@ -4,6 +4,7 @@ import { apiGet, apiPost } from '../lib/api'
 import { useApp } from '../lib/context'
 import { useToast } from '../lib/toast'
 import type { FineTuneConfig, FineTuneStatus, LossPoint } from '../lib/types'
+import { HelpTip } from '../components/HelpTip'
 
 const BASE_MODELS = [
   'amazon/chronos-t5-small',
@@ -93,6 +94,7 @@ export default function FineTune() {
       <div className="h-[26px] flex items-center px-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
         <span className="text-[10px] font-bold tracking-[0.1em] uppercase text-[var(--amber)]">Fine-Tune</span>
         <span className="ml-3 font-mono text-[8px] text-[var(--grey)]">TRAIN CUSTOM MODELS VIA PYTORCH</span>
+        <span className="ml-auto"><HelpTip text="Fine-tuning trains a small LSTM head on top of a frozen pretrained model using your data. The resulting model is registered and can be used as a forecaster from the Models page or the MODEL dropdown." /></span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 max-w-3xl space-y-3">
@@ -111,14 +113,14 @@ export default function FineTune() {
           <div className="p-3 space-y-3 border-t border-[var(--border)]">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-0.5">
-                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">BASE MODEL</label>
+                <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">BASE MODEL<HelpTip text="Which pretrained model to fine-tune. amazon/chronos-t5-small is fastest; bolt models are the new architecture and train faster." /></label>
                 <select className="blz-select w-full" value={config.model_name} onChange={e => setConfig(c => ({ ...c, model_name: e.target.value }))}>
                   {BASE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
               <div className="space-y-0.5">
                 <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">
-                  CUSTOM NAME
+                  CUSTOM NAME<HelpTip text="3-40 characters: lowercase letters, digits, underscores, hyphens. Becomes the registered model name after training." />
                   {config.custom_name && !nameValid && <span className="ml-1 text-[var(--red)]">INVALID</span>}
                 </label>
                 <input
@@ -134,14 +136,15 @@ export default function FineTune() {
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              <ParamInput label="LR" value={config.learning_rate} step={0.00001} onChange={v => setConfig(c => ({ ...c, learning_rate: v }))} />
-              <ParamInput label="EPOCHS" value={config.num_epochs} step={1} min={1} max={50} onChange={v => setConfig(c => ({ ...c, num_epochs: v }))} />
-              <ParamInput label="BATCH" value={config.batch_size} step={1} min={1} max={64} onChange={v => setConfig(c => ({ ...c, batch_size: v }))} />
-              <ParamInput label="WARMUP" value={config.warmup_steps} step={10} min={0} onChange={v => setConfig(c => ({ ...c, warmup_steps: v }))} />
-              <ParamInput label="DECAY" value={config.weight_decay} step={0.001} onChange={v => setConfig(c => ({ ...c, weight_decay: v }))} />
+              <ParamInput label="LR" tip="Learning rate. Default 1e-4. Higher = faster but unstable; lower = slower but more stable convergence." value={config.learning_rate} step={0.00001} onChange={v => setConfig(c => ({ ...c, learning_rate: v }))} />
+              <ParamInput label="EPOCHS" tip="Number of passes through the training data. More = better fit, risk overfitting. 3-10 is typical." value={config.num_epochs} step={1} min={1} max={50} onChange={v => setConfig(c => ({ ...c, num_epochs: v }))} />
+              <ParamInput label="BATCH" tip="Batch size. Larger = faster training, more memory. 8-32 is typical." value={config.batch_size} step={1} min={1} max={64} onChange={v => setConfig(c => ({ ...c, batch_size: v }))} />
+              <ParamInput label="WARMUP" tip="Number of warmup steps where the learning rate ramps up from 0 to LR. Helps stability early in training." value={config.warmup_steps} step={10} min={0} onChange={v => setConfig(c => ({ ...c, warmup_steps: v }))} />
+              <ParamInput label="DECAY" tip="Weight decay (L2 regularization). Helps prevent overfitting. 0.01 is standard." value={config.weight_decay} step={0.001} onChange={v => setConfig(c => ({ ...c, weight_decay: v }))} />
               <div className="space-y-0.5">
                 <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">
                   SPLIT <span className="text-[var(--amber)]">{config.train_split}</span>
+                  <HelpTip text="Fraction of data used for training. The remainder is split between validation and test. 0.8 = 80% train." />
                 </label>
                 <input type="range" className="w-full accent-[var(--amber)]" min={0.5} max={0.95} step={0.05} value={config.train_split} onChange={e => setConfig(c => ({ ...c, train_split: Number(e.target.value) }))} />
               </div>
@@ -235,12 +238,12 @@ export default function FineTune() {
   )
 }
 
-function ParamInput({ label, value, step, min, max, onChange }: {
-  label: string; value: number; step: number; min?: number; max?: number; onChange: (v: number) => void
+function ParamInput({ label, tip, value, step, min, max, onChange }: {
+  label: string; tip?: string; value: number; step: number; min?: number; max?: number; onChange: (v: number) => void
 }) {
   return (
     <div className="space-y-0.5">
-      <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">{label}</label>
+      <label className="block text-[8px] font-bold tracking-[0.1em] uppercase text-[var(--grey)]">{label}{tip && <HelpTip text={tip} />}</label>
       <input type="number" className="blz-input w-full" value={value} step={step} min={min} max={max} onChange={e => onChange(Number(e.target.value))} />
     </div>
   )

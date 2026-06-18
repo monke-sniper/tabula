@@ -4,6 +4,7 @@ import { useToast } from '../lib/toast'
 import Plot from 'react-plotly.js'
 import { apiGet, apiPost, ApiError } from '../lib/api'
 import type { EDAStats, ColumnInfo, CleanResponse } from '../lib/types'
+import { HelpTip } from './HelpTip'
 
 type EDATab = 'stats' | 'dist' | 'corr' | 'missing' | 'outliers'
 
@@ -47,6 +48,8 @@ export default function EDAPanel() {
     )
   }
 
+  const currentTab = tabs.find((t) => t.key === tab)
+
   return (
     <div className="blz-panel h-full flex flex-col">
       <div className="blz-header">
@@ -62,11 +65,13 @@ export default function EDAPanel() {
               }`}
             >
               {t.label}
+              <HelpTip text={t.tip} />
             </button>
           ))}
         </div>
         <button onClick={refresh} className="blz-btn py-0 text-[8px]">REFRESH</button>
       </div>
+      {currentTab?.description && <div className="help-strip">{currentTab.description}</div>}
       <div className="p-2 flex-1 overflow-hidden">
         {tab === 'stats' && <StatsView stats={edaStats} />}
         {tab === 'dist' && <DistView stats={edaStats} />}
@@ -78,12 +83,37 @@ export default function EDAPanel() {
   )
 }
 
-const tabs = [
-  { key: 'stats' as EDATab, label: 'STATS' },
-  { key: 'dist' as EDATab, label: 'DIST' },
-  { key: 'corr' as EDATab, label: 'CORR' },
-  { key: 'missing' as EDATab, label: 'NULL' },
-  { key: 'outliers' as EDATab, label: 'OUT' },
+const tabs: Array<{ key: EDATab; label: string; tip: string; description: string }> = [
+  {
+    key: 'stats',
+    label: 'STATS',
+    tip: 'Per-column summary: type, null count, unique count, mean, std, min, max. Numeric columns get full stats; non-numeric get min/max as strings.',
+    description: 'Per-column summary — type, null count, unique count, mean, std, min, max. Click REFRESH to recompute after a clean.',
+  },
+  {
+    key: 'dist',
+    label: 'DIST',
+    tip: '20-bin histogram of the selected numeric column. Cyan dashed line = mean, dotted lines = mean ± 1σ.',
+    description: 'Histogram of the selected column. Dashed cyan line = column mean; dotted lines = mean ± 1σ. Click a column name to switch.',
+  },
+  {
+    key: 'corr',
+    label: 'CORR',
+    tip: 'Pairwise Pearson correlation between every pair of numeric columns. +1 = perfect positive, -1 = perfect negative. Red = negative, green = positive.',
+    description: 'Pairwise Pearson correlation between every numeric column. Range -1..+1. Red = negative, green = positive, black = no linear relation.',
+  },
+  {
+    key: 'missing',
+    label: 'NULL',
+    tip: 'Percentage of missing values per column. FILL = forward fill (then back fill). DROP = drop rows where that column is null.',
+    description: 'Missing-value percentage per column. FILL forward-fills then back-fills; DROP removes rows where that column is null. Both are destructive.',
+  },
+  {
+    key: 'outliers',
+    label: 'OUT',
+    tip: 'Count of values outside Q1 - 1.5·IQR to Q3 + 1.5·IQR (Tukey fences). FILL MEAN replaces outliers with the column mean.',
+    description: 'Count of values outside Q1 - 1.5·IQR to Q3 + 1.5·IQR (Tukey fences). FILL MEAN replaces outliers with the column mean.',
+  },
 ]
 
 function StatsView({ stats }: { stats: EDAStats }) {

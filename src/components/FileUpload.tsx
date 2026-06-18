@@ -3,6 +3,7 @@ import { apiUpload, apiGet } from '../lib/api'
 import { useApp } from '../lib/context'
 import { useToast } from '../lib/toast'
 import type { UploadResponse, EDAStats } from '../lib/types'
+import { HelpTip } from './HelpTip'
 
 export default function FileUpload() {
   const [isDragOver, setIsDragOver] = useState(false)
@@ -141,12 +142,13 @@ export default function FileUpload() {
               <svg className="w-4 h-4 text-[var(--amber)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
               </svg>
-              <span className="text-[10px] font-semibold text-[var(--white)]">DROP DATA FILE</span>
+              <span className="text-[10px] font-semibold text-[var(--white)]">DROP DATA FILE<HelpTip text="Drop or browse for a CSV, JSON, XLSX, or Parquet file. The first row is treated as the header. The first datetime column is auto-detected as the timestamp axis." /></span>
             </div>
             <span className="text-[8px] text-[var(--grey-dim)]">|</span>
             <span className="font-mono text-[9px] text-[var(--grey)]">CSV · JSON · XLSX · PARQUET</span>
             <span className="text-[8px] text-[var(--grey-dim)]">|</span>
             <span className="font-mono text-[9px] text-[var(--grey)]">OR CLICK TO BROWSE</span>
+            <span className="text-[8px] text-[var(--grey-dim)] ml-auto">Ctrl+O</span>
           </>
         )}
       </div>

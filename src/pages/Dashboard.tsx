@@ -7,15 +7,31 @@ import { useApp } from '../lib/context'
 import { useToast } from '../lib/toast'
 import { apiPost, apiGet, ApiError } from '../lib/api'
 import type { UploadResponse, EDAStats } from '../lib/types'
+import { HelpModal } from '../components/HelpModal'
 
 export default function Dashboard() {
   const { uploadData, forecastResult, sessionId, health, setUploadData, setSessionId, setEDAStats } = useApp()
   const toast = useToast()
   const [clock, setClock] = useState(new Date())
+  const [helpOpen, setHelpOpen] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000)
     return () => clearInterval(t)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+      if (inField) return
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault()
+        setHelpOpen((v) => !v)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
   }, [])
 
   const fmtTime = (d: Date) =>
@@ -60,6 +76,14 @@ export default function Dashboard() {
           <span className="text-[8px] text-[var(--grey)]">ANALYZE</span>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="w-4 h-4 inline-flex items-center justify-center border border-[var(--border-bright)] text-[var(--grey-bright)] hover:text-[var(--amber)] hover:border-[var(--amber)] font-mono text-[10px] font-bold"
+            title="Open help (?)"
+            aria-label="Open help"
+          >
+            ?
+          </button>
           <span className="font-mono text-[9px] text-[var(--grey)]">{fmtDate(clock)}</span>
           <span className="font-mono text-[10px] text-[var(--amber)] font-semibold">{fmtTime(clock)}</span>
           <div className={`w-1.5 h-1.5 rounded-full ${health?.status === 'healthy' ? 'bg-[var(--green)] blink' : health ? 'bg-[var(--red)]' : 'bg-[var(--grey)]'} blink`} />
@@ -142,6 +166,8 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
