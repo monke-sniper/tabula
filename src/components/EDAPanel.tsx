@@ -1,13 +1,43 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../lib/context'
+import { useToast } from '../lib/toast'
 import Plot from 'react-plotly.js'
-import type { EDAStats, ColumnInfo } from '../lib/types'
+import { apiGet, apiPost, ApiError } from '../lib/api'
+import type { EDAStats, ColumnInfo, CleanResponse } from '../lib/types'
 
 type EDATab = 'stats' | 'dist' | 'corr' | 'missing' | 'outliers'
 
 export default function EDAPanel() {
-  const { edaStats } = useApp()
+  const { edaStats, setEDAStats, sessionId, uploadData, setUploadData, setSessionId } = useApp()
+  const toast = useToast()
   const [tab, setTab] = useState<EDATab>('stats')
+
+  const refresh = async () => {
+    if (!sessionId) return
+    try {
+      const eda = await apiGet<EDAStats>(`/eda/${sessionId}`)
+      setEDAStats(eda)
+    } catch (e) {
+      toast('error', 'EDA refresh failed', (e as Error).message)
+    }
+  }
+
+  const clean = async (strategy: 'drop' | 'mean' | 'zero' | 'ffill', columns: string[]) => {
+    if (!sessionId) return
+    try {
+      const res = await apiPost<CleanResponse>(`/sessions/${sessionId}/clean`, { strategy, columns })
+      toast('success', `Cleaned · ${strategy}`, `${res.rows_before} → ${res.rows_after} rows`)
+      // refresh EDA + upload summary
+      const eda = await apiGet<EDAStats>(`/eda/${sessionId}`)
+      setEDAStats(eda)
+      if (uploadData) {
+        setUploadData({ ...uploadData, rows: res.rows_after })
+      }
+    } catch (e) {
+      if (e instanceof ApiError) toast('error', `Clean failed`, e.detail)
+      else toast('error', `Clean failed`, (e as Error).message)
+    }
+  }
 
   if (!edaStats) {
     return (
@@ -35,13 +65,14 @@ export default function EDAPanel() {
             </button>
           ))}
         </div>
+        <button onClick={refresh} className="blz-btn py-0 text-[8px]">REFRESH</button>
       </div>
       <div className="p-2 flex-1 overflow-hidden">
         {tab === 'stats' && <StatsView stats={edaStats} />}
         {tab === 'dist' && <DistView stats={edaStats} />}
         {tab === 'corr' && <CorrView stats={edaStats} />}
-        {tab === 'missing' && <MissingView stats={edaStats} />}
-        {tab === 'outliers' && <OutlierView stats={edaStats} />}
+        {tab === 'missing' && <MissingView stats={edaStats} onClean={(cols) => clean('ffill', cols)} onDrop={(cols) => clean('drop', cols)} />}
+        {tab === 'outliers' && <OutlierView stats={edaStats} onCap={(cols) => clean('mean', cols)} />}
       </div>
     </div>
   )
@@ -97,6 +128,18 @@ function DistView({ stats }: { stats: EDAStats }) {
   const numericCols = stats.column_info.filter((c) => c.mean !== undefined)
   const [sel, setSel] = useState<string>(numericCols[0]?.name ?? '')
   const dist = stats.distributions[sel]
+  const col = numericCols.find((c) => c.name === sel)
+
+  const overlay = col && dist
+    ? {
+        x: [col.min as number, col.max as number],
+        // mean line
+        meanX: [col.mean as number, col.mean as number],
+        // ±1 std band
+        stdLow: [(col.mean as number) - (col.std as number), (col.mean as number) - (col.std as number)],
+        stdHigh: [(col.mean as number) + (col.std as number), (col.mean as number) + (col.std as number)],
+      }
+    : null
 
   return (
     <div className="h-full flex flex-col">
@@ -118,12 +161,46 @@ function DistView({ stats }: { stats: EDAStats }) {
       <div className="flex-1 min-h-0">
         {dist && (
           <Plot
-            data={[{
-              x: dist.bins.slice(0, -1),
-              y: dist.counts,
-              type: 'bar',
-              marker: { color: 'rgba(255,136,0,0.5)', line: { color: 'rgba(255,136,0,0.8)', width: 0.5 } },
-            }]}
+            data={[
+              {
+                x: dist.bins.slice(0, -1),
+                y: dist.counts,
+                type: 'bar',
+                marker: { color: 'rgba(255,136,0,0.5)', line: { color: 'rgba(255,136,0,0.8)', width: 0.5 } },
+                name: 'count',
+              },
+              ...(overlay ? [
+                {
+                  x: overlay.meanX,
+                  y: [0, Math.max(...dist.counts) * 0.95],
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'mean',
+                  line: { color: '#00bcd4', width: 1.5, dash: 'dash' },
+                  hoverinfo: 'skip',
+                } as Partial<Plotly.Data>,
+                {
+                  x: overlay.stdLow,
+                  y: [0, Math.max(...dist.counts) * 0.95],
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'mean ± 1σ',
+                  line: { color: 'rgba(0,188,212,0.3)', width: 1, dash: 'dot' },
+                  showlegend: false,
+                  hoverinfo: 'skip',
+                } as Partial<Plotly.Data>,
+                {
+                  x: overlay.stdHigh,
+                  y: [0, Math.max(...dist.counts) * 0.95],
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'mean ± 1σ',
+                  line: { color: 'rgba(0,188,212,0.3)', width: 1, dash: 'dot' },
+                  showlegend: false,
+                  hoverinfo: 'skip',
+                } as Partial<Plotly.Data>,
+              ] : []),
+            ] as Plotly.Data[]}
             layout={{
               height: undefined,
               margin: { t: 5, b: 25, l: 35, r: 5 },
@@ -132,6 +209,7 @@ function DistView({ stats }: { stats: EDAStats }) {
               font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
               xaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
               yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
+              legend: { orientation: 'h', y: 1.1, x: 0.5, xanchor: 'center', font: { size: 7, color: '#666' }, bgcolor: 'transparent' },
             }}
             config={{ displayModeBar: false }}
             style={{ width: '100%', height: '100%' }}
@@ -176,7 +254,7 @@ function CorrView({ stats }: { stats: EDAStats }) {
   )
 }
 
-function MissingView({ stats }: { stats: EDAStats }) {
+function MissingView({ stats, onClean, onDrop }: { stats: EDAStats; onClean: (cols: string[]) => void; onDrop: (cols: string[]) => void }) {
   const missing = stats.missing_values.filter((m) => m.count > 0)
   if (!missing.length) {
     return (
@@ -190,35 +268,48 @@ function MissingView({ stats }: { stats: EDAStats }) {
   }
 
   return (
-    <div className="h-full">
-      <Plot
-        data={[{
-          x: missing.map((m) => m.column),
-          y: missing.map((m) => m.pct),
-          type: 'bar',
-          marker: { color: 'rgba(255,136,0,0.5)', line: { color: '#ff8800', width: 0.5 } },
-          text: missing.map((m) => `${m.pct.toFixed(1)}%`),
-          textposition: 'outside',
-          textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
-        }]}
-        layout={{
-          height: undefined,
-          margin: { t: 5, b: 45, l: 35, r: 5 },
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
-          yaxis: { gridcolor: '#1a1a1a', title: { text: '%', font: { size: 8, color: '#666' } }, tickfont: { size: 7 } },
-          xaxis: { tickangle: -45, tickfont: { size: 7 } },
-        }}
-        config={{ displayModeBar: false }}
-        style={{ width: '100%', height: '100%' }}
-        useResizeHandler
-      />
+    <div className="h-full flex flex-col">
+      <div className="flex-1 min-h-0">
+        <Plot
+          data={[{
+            x: missing.map((m) => m.column),
+            y: missing.map((m) => m.pct),
+            type: 'bar',
+            marker: { color: 'rgba(255,136,0,0.5)', line: { color: '#ff8800', width: 0.5 } },
+            text: missing.map((m) => `${m.pct.toFixed(1)}%`),
+            textposition: 'outside',
+            textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+          }]}
+          layout={{
+            height: undefined,
+            margin: { t: 10, b: 45, l: 35, r: 5 },
+            paper_bgcolor: 'transparent',
+            plot_bgcolor: 'transparent',
+            font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+            yaxis: { gridcolor: '#1a1a1a', title: { text: '%', font: { size: 8, color: '#666' } }, tickfont: { size: 7 } },
+            xaxis: { tickangle: -45, tickfont: { size: 7 } },
+          }}
+          config={{ displayModeBar: false }}
+          style={{ width: '100%', height: '100%' }}
+          useResizeHandler
+        />
+      </div>
+      <div className="shrink-0 border-t border-[var(--border-dim)] p-1.5 flex flex-wrap gap-1.5">
+        <span className="font-mono text-[8px] text-[var(--grey)] self-center">PER-COLUMN:</span>
+        {missing.map((m) => (
+          <div key={m.column} className="flex items-center gap-1 font-mono text-[8px] border border-[var(--border-dim)] px-1.5 py-0.5">
+            <span className="text-[var(--amber)]">{m.column}</span>
+            <button onClick={() => onClean([m.column])} className="text-[var(--cyan)] hover:underline">FILL</button>
+            <span className="text-[var(--grey-dim)]">·</span>
+            <button onClick={() => onDrop([m.column])} className="text-[var(--red)] hover:underline">DROP</button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-function OutlierView({ stats }: { stats: EDAStats }) {
+function OutlierView({ stats, onCap }: { stats: EDAStats; onCap: (cols: string[]) => void }) {
   const withOutliers = stats.outliers.filter((o) => o.count > 0)
   if (!withOutliers.length) {
     return (
@@ -232,30 +323,42 @@ function OutlierView({ stats }: { stats: EDAStats }) {
   }
 
   return (
-    <div className="h-full">
-      <Plot
-        data={[{
-          x: withOutliers.map((o) => o.column),
-          y: withOutliers.map((o) => o.count),
-          type: 'bar',
-          marker: { color: 'rgba(255,23,68,0.5)', line: { color: '#ff1744', width: 0.5 } },
-          text: withOutliers.map((o) => `${o.count}`),
-          textposition: 'outside',
-          textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
-        }]}
-        layout={{
-          height: undefined,
-          margin: { t: 5, b: 45, l: 35, r: 5 },
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
-          yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
-          xaxis: { tickangle: -45, tickfont: { size: 7 } },
-        }}
-        config={{ displayModeBar: false }}
-        style={{ width: '100%', height: '100%' }}
-        useResizeHandler
-      />
+    <div className="h-full flex flex-col">
+      <div className="flex-1 min-h-0">
+        <Plot
+          data={[{
+            x: withOutliers.map((o) => o.column),
+            y: withOutliers.map((o) => o.count),
+            type: 'bar',
+            marker: { color: 'rgba(255,23,68,0.5)', line: { color: '#ff1744', width: 0.5 } },
+            text: withOutliers.map((o) => `${o.count}`),
+            textposition: 'outside',
+            textfont: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+          }]}
+          layout={{
+            height: undefined,
+            margin: { t: 10, b: 45, l: 35, r: 5 },
+            paper_bgcolor: 'transparent',
+            plot_bgcolor: 'transparent',
+            font: { color: '#666', size: 8, family: 'IBM Plex Mono' },
+            yaxis: { gridcolor: '#1a1a1a', tickfont: { size: 7 } },
+            xaxis: { tickangle: -45, tickfont: { size: 7 } },
+          }}
+          config={{ displayModeBar: false }}
+          style={{ width: '100%', height: '100%' }}
+          useResizeHandler
+        />
+      </div>
+      <div className="shrink-0 border-t border-[var(--border-dim)] p-1.5 flex flex-wrap gap-1.5">
+        <span className="font-mono text-[8px] text-[var(--grey)] self-center">PER-COLUMN:</span>
+        {withOutliers.map((o) => (
+          <div key={o.column} className="flex items-center gap-1 font-mono text-[8px] border border-[var(--border-dim)] px-1.5 py-0.5">
+            <span className="text-[var(--red)]">{o.column}</span>
+            <span className="text-[var(--grey-dim)]">({o.count})</span>
+            <button onClick={() => onCap([o.column])} className="text-[var(--amber)] hover:underline">FILL MEAN</button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
