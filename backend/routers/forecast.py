@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-import threading
+import os
 import time
 from typing import Optional
 
@@ -12,36 +12,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services import forecaster as fc
+from routers.data import get_session, pick_target
+from routers.finetune import MODELS_DIR, _load_model_registry
 
 router = APIRouter()
 logger = logging.getLogger("tabula.forecast")
 
-_forecast_cancelled = False
-_cancel_lock = threading.Lock()
-
-
-def _get_df(session_id: str) -> pd.DataFrame:
-    from routers.data import sessions
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found. Upload data first.")
-    return sessions[session_id]
-
-
-def _is_id_like_column(name: str) -> bool:
-    n = name.lower()
-    return n in {"id", "idx", "index"} or n.endswith("_id") or n.startswith("id_")
-
-
-def _pick_target(df: pd.DataFrame, requested: Optional[str]) -> str:
-    if requested and requested in df.columns:
-        return requested
-    numeric = [c for c in df.select_dtypes(include=["number"]).columns.tolist() if not _is_id_like_column(c)]
-    if not numeric:
-        # fall back to anything numeric
-        numeric = df.select_dtypes(include=["number"]).columns.tolist()
-    if not numeric:
-        raise HTTPException(status_code=400, detail="No numeric columns found")
-    return numeric[0]
+MIN_POINTS = 16
+BANDS = ("median", "lower_2_5", "lower_10", "lower_25", "upper_75", "upper_90", "upper_97_5")
 
 
 def _get_timestamp_column(df: pd.DataFrame) -> Optional[str]:
@@ -51,13 +29,32 @@ def _get_timestamp_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-@router.post("/forecast/cancel")
-def cancel_forecast():
-    global _forecast_cancelled
-    with _cancel_lock:
-        _forecast_cancelled = True
-    logger.info("Forecast cancellation requested")
-    return {"status": "cancelled"}
+def _resolve_engine(model_name: str) -> fc.Forecaster:
+    """Validate the model name against built-ins and the fine-tune registry."""
+    if fc._is_chronos_family(model_name) or model_name in fc.FALLBACK_NAMES:
+        return fc.get_forecaster(model_name)
+    registry = _load_model_registry()
+    if any(m["name"] == model_name for m in registry.get("models", [])):
+        return fc.get_forecaster(model_name, os.path.join(MODELS_DIR, model_name))
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"unknown model '{model_name}'. Use an amazon/chronos-t5-* name, "
+            f"a fine-tuned model from the registry, or 'statistical-fallback'."
+        ),
+    )
+
+
+def _row(ts: str, actual: Optional[float], bands: dict[str, float], is_forecast: bool,
+         iterations: list[float], is_anchor: bool = False) -> dict:
+    return {
+        "timestamp": str(ts),
+        "actual": actual,
+        "is_forecast": is_forecast,
+        "is_anchor": is_anchor,
+        "iteration_values": iterations,
+        **{k: round(float(v), 6) for k, v in bands.items()},
+    }
 
 
 class ForecastRequestBody(BaseModel):
@@ -65,42 +62,35 @@ class ForecastRequestBody(BaseModel):
     horizon: int = Field(24, ge=1, le=2000)
     num_samples: int = Field(50, ge=1, le=500)
     model_name: str = "amazon/chronos-t5-small"
-    top_p: float = 0.9
-    top_k: int = 50
-    temperature: float = 1.0
+    top_p: float = Field(0.9, gt=0, le=1)
+    top_k: int = Field(50, ge=0)
+    temperature: float = Field(1.0, gt=0)
 
 
 @router.post("/forecast/{session_id}")
 def run_forecast(session_id: str, body: ForecastRequestBody):
-    global _forecast_cancelled
-    with _cancel_lock:
-        _forecast_cancelled = False
-
-    df = _get_df(session_id)
-    target_col = _pick_target(df, body.target_column)
+    df = get_session(session_id)
+    target_col = pick_target(df, body.target_column)
 
     ts_col = _get_timestamp_column(df)
-    if ts_col is not None:
-        ts_values = df[ts_col].astype(str).tolist()
-    else:
-        ts_values = [str(i) for i in range(len(df))]
+    ts_values = df[ts_col].astype(str).tolist() if ts_col is not None else [str(i) for i in range(len(df))]
 
     series_full = df[target_col].astype(float)
-    series_clean = series_full.dropna()
+    keep = series_full.notna().values
     # keep only the timestamps that correspond to non-null values
-    keep_idx = series_full.notna().values
-    timestamps = [t for t, k in zip(ts_values, keep_idx) if k]
-    series_list = series_clean.tolist()
+    timestamps = [t for t, k in zip(ts_values, keep) if k]
+    series_list = series_full[keep].tolist()
 
-    if len(series_list) < 16:
+    if len(series_list) < MIN_POINTS:
         raise HTTPException(
             status_code=400,
-            detail=f"not enough data points ({len(series_list)}); need at least 16",
+            detail=f"not enough data points ({len(series_list)}); need at least {MIN_POINTS}",
         )
-    if body.horizon >= len(series_list):
+    if body.horizon > len(series_list) - MIN_POINTS:
         raise HTTPException(
             status_code=400,
-            detail=f"horizon ({body.horizon}) must be smaller than series length ({len(series_list)})",
+            detail=f"horizon ({body.horizon}) too large: at most {len(series_list) - MIN_POINTS} "
+                   f"so {MIN_POINTS} points remain as history",
         )
 
     split_point = len(series_list) - body.horizon
@@ -109,26 +99,7 @@ def run_forecast(session_id: str, body: ForecastRequestBody):
 
     # season detection happens on full timestamps; it's a structural property
     seasonality = fc._detect_seasonality(timestamps)
-
-    # Validate model_name against the registry or known families
-    from routers.finetune import _load_model_registry
-    registry = _load_model_registry()
-    registered_names = {m["name"] for m in registry.get("models", [])}
-    known = (
-        fc._is_chronos_family(body.model_name)
-        or body.model_name in {"statistical-fallback", "fallback", "naive", "seasonal-naive"}
-        or body.model_name in registered_names
-        or body.model_name == registry.get("active", "")
-    )
-    if not known:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"unknown model '{body.model_name}'. "
-                f"Use an amazon/chronos-* name, google/timesfm-*, "
-                f"a registered custom model, or 'statistical-fallback'."
-            ),
-        )
+    engine = _resolve_engine(body.model_name)
 
     req = fc.ForecastRequest(
         series=history,
@@ -142,98 +113,43 @@ def run_forecast(session_id: str, body: ForecastRequestBody):
         seasonality=seasonality,
     )
 
-    try:
-        engine = fc.get_forecaster(body.model_name)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"unknown model: {body.model_name} ({e})")
-
-    # cancellation poll during predict
-    def _cancelled() -> bool:
-        global _forecast_cancelled
-        return _forecast_cancelled
-
     t0 = time.time()
     try:
-        # cancellation is a soft best-effort — chronos doesn't yield mid-run
-        if _cancelled():
-            raise HTTPException(status_code=200, detail={"status": "cancelled"})
         result = engine.predict(req)
     except fc.InsufficientDataError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except fc.ForecastEngineError as e:
         logger.exception("forecast failed")
         raise HTTPException(status_code=500, detail=f"forecast engine error: {e}")
-    except HTTPException:
-        raise
     except Exception as e:
         logger.exception("forecast crashed")
         raise HTTPException(status_code=500, detail=f"forecast failed: {e}")
 
-    if _cancelled():
-        raise HTTPException(status_code=200, detail={"status": "cancelled"})
-
-    # build result rows — historical + forecast
-    rows: list[dict] = []
-    for i, ts in enumerate(timestamps[:split_point]):
-        rows.append({
-            "timestamp": str(ts),
-            "actual": round(float(history[i]), 6),
-            "is_forecast": False,
-            "iteration_values": [],
-            "median": round(float(history[i]), 6),
-            "lower_2_5": round(float(history[i]), 6),
-            "lower_10": round(float(history[i]), 6),
-            "lower_25": round(float(history[i]), 6),
-            "upper_75": round(float(history[i]), 6),
-            "upper_90": round(float(history[i]), 6),
-            "upper_97_5": round(float(history[i]), 6),
-        })
+    # historical rows: every band collapses onto the actual value
+    rows = [
+        _row(ts, round(float(v), 6), {k: v for k in BANDS}, False, [])
+        for ts, v in zip(timestamps[:split_point], history)
+    ]
     # anchor: synthetic t=0 forecast point at the last historical timestamp
-    # with zero band width and a single iteration equal to the last actual.
-    # the fan emerges from this point and widens outward, matching the
-    # standard fan-chart convention (Bank of England / NY Times style).
-    anchor_ts = str(timestamps[split_point - 1])
-    anchor_val = round(float(history[-1]), 6)
-    rows.append({
-        "timestamp": anchor_ts,
-        "actual": None,
-        "is_forecast": True,
-        "iteration_values": [anchor_val],
-        "median": anchor_val,
-        "lower_2_5": anchor_val,
-        "lower_10": anchor_val,
-        "lower_25": anchor_val,
-        "upper_75": anchor_val,
-        "upper_90": anchor_val,
-        "upper_97_5": anchor_val,
-        "is_anchor": True,
-    })
+    # with zero band width, so the fan emerges from the last actual and widens
+    # outward (Bank of England / NYT fan-chart convention).
+    last = round(float(history[-1]), 6)
+    rows.append(_row(timestamps[split_point - 1], None, {k: last for k in BANDS}, True, [last], is_anchor=True))
     for h in range(body.horizon):
-        actual = round(float(actuals[h]), 6) if h < len(actuals) else None
-        rows.append({
-            "timestamp": str(result.timestamps[h]) if h < len(result.timestamps) else f"t+{h+1}",
-            "actual": actual,
-            "is_forecast": True,
-            "is_anchor": False,
-            "iteration_values": [round(float(v), 6) for v in result.iterations[h]],
-            "median": round(float(result.median[h]), 6),
-            "lower_2_5": round(float(result.lower_2_5[h]), 6),
-            "lower_10": round(float(result.lower_10[h]), 6),
-            "lower_25": round(float(result.lower_25[h]), 6),
-            "upper_75": round(float(result.upper_75[h]), 6),
-            "upper_90": round(float(result.upper_90[h]), 6),
-            "upper_97_5": round(float(result.upper_97_5[h]), 6),
-        })
+        rows.append(_row(
+            result.timestamps[h] if h < len(result.timestamps) else f"t+{h+1}",
+            round(float(actuals[h]), 6),
+            {k: getattr(result, k)[h] for k in BANDS},
+            True,
+            [round(float(v), 6) for v in result.iterations[h]],
+        ))
 
     # metrics against held-out actuals
-    med = np.array([r["median"] for r in rows if r["actual"] is not None], dtype=np.float64)
-    act = np.array([r["actual"] for r in rows if r["actual"] is not None], dtype=np.float64)
-    if act.size:
-        mae = float(np.mean(np.abs(act - med)))
-        rmse = float(np.sqrt(np.mean((act - med) ** 2)))
-        mape = float(np.mean(np.abs((act - med) / (np.abs(act) + 1e-10))) * 100)
-    else:
-        mae = rmse = mape = 0.0
+    act = np.array(actuals, dtype=np.float64)
+    med = np.array(result.median[:len(act)], dtype=np.float64)
+    mae = float(np.mean(np.abs(act - med)))
+    rmse = float(np.sqrt(np.mean((act - med) ** 2)))
+    mape = float(np.mean(np.abs((act - med) / (np.abs(act) + 1e-10))) * 100)
 
     elapsed = int((time.time() - t0) * 1000)
     logger.info(

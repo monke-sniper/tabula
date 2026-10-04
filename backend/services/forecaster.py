@@ -2,8 +2,9 @@
 
 Public surface:
     - Forecaster           : protocol all engines implement
-    - ChronosForecaster    : real Chronos foundation model (amazon/*, google/timesfm)
-    - StatisticalFallbackForecaster : seasonal-naive + exp-smoothing + theta + MC bootstrap
+    - ChronosForecaster    : real Chronos foundation model (amazon/chronos-t5-*)
+    - LSTMForecaster       : LSTM trained on the Fine-Tune page (MC-dropout sampling)
+    - StatisticalFallbackForecaster : linear trend + seasonal profile + noise paths
     - get_forecaster(name) : factory that picks the right engine for a model name
     - warmup_default_models : call once at app startup to pre-load the default model
     - _detect_seasonality  : infer a seasonality period from a timestamp series
@@ -15,6 +16,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Optional, Protocol
 
 import numpy as np
@@ -22,7 +24,14 @@ import numpy as np
 logger = logging.getLogger("tabula.forecaster")
 
 
-CHRONOS_FAMILY = ("amazon/chronos-", "amazon/chronos-bolt-", "google/timesfm-")
+# Only the T5 family loads through ChronosPipeline; bolt / chronos-2 need
+# different pipelines with a quantile (not sample-path) output.
+CHRONOS_FAMILY = ("amazon/chronos-t5-",)
+FALLBACK_NAMES = {"statistical-fallback", "fallback", "naive", "seasonal-naive"}
+
+LSTM_HIDDEN = 64
+LSTM_LAYERS = 2
+LSTM_DEFAULT_SEQ_LEN = 64
 
 
 class ForecastEngineError(RuntimeError):
@@ -70,6 +79,27 @@ class Forecaster(Protocol):
     def predict(self, req: ForecastRequest) -> ForecastResult: ...
 
 
+def _build_result(paths: np.ndarray, req: ForecastRequest, model_used: str, device: str, inference_ms: int) -> ForecastResult:
+    """Summarise sample paths of shape (horizon, num_samples) into a ForecastResult."""
+    pct = lambda q: np.percentile(paths, q, axis=1).tolist()  # noqa: E731
+    return ForecastResult(
+        timestamps=_extend_timestamps(req.timestamps, req.horizon, req.seasonality),
+        historical_values=req.series,
+        iterations=paths.tolist(),
+        median=np.median(paths, axis=1).tolist(),
+        lower_25=pct(25),
+        upper_75=pct(75),
+        lower_10=pct(10),
+        upper_90=pct(90),
+        lower_2_5=pct(2.5),
+        upper_97_5=pct(97.5),
+        model_used=model_used,
+        device=device,
+        inference_ms=inference_ms,
+        seasonality=req.seasonality,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Seasonality detection
 # ---------------------------------------------------------------------------
@@ -82,16 +112,18 @@ _KIND_BY_SECONDS = [
 ]
 
 
-def _parse_ts(t: str) -> Optional[float]:
+def _parse_dt(t: str) -> Optional[datetime]:
     if not t:
         return None
     try:
-        from datetime import datetime
-        s = t.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-        return dt.timestamp()
-    except Exception:
+        return datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
         return None
+
+
+def _parse_ts(t: str) -> Optional[float]:
+    dt = _parse_dt(t)
+    return dt.timestamp() if dt else None
 
 
 def _detect_seasonality(timestamps: list[str]) -> dict:
@@ -99,15 +131,16 @@ def _detect_seasonality(timestamps: list[str]) -> dict:
 
     If we cannot infer, period=1, kind='irregular'.
     """
+    irregular = {"period": 1, "kind": "irregular", "median_step_seconds": 0.0}
     if not timestamps or len(timestamps) < 4:
-        return {"period": 1, "kind": "irregular", "median_step_seconds": 0.0}
+        return irregular
     parsed = [t for t in (_parse_ts(x) for x in timestamps) if t is not None]
     if len(parsed) < 4:
-        return {"period": 1, "kind": "irregular", "median_step_seconds": 0.0}
+        return irregular
     diffs = np.diff(parsed)
     diffs = diffs[diffs > 0]
     if len(diffs) == 0:
-        return {"period": 1, "kind": "irregular", "median_step_seconds": 0.0}
+        return irregular
     step = float(np.median(diffs))
     for sec, period, kind in _KIND_BY_SECONDS:
         if 0.5 * sec <= step <= 1.5 * sec:
@@ -154,9 +187,7 @@ _PIPELINE_LOCK = threading.Lock()
 
 
 def _is_chronos_family(name: str) -> bool:
-    if not name:
-        return False
-    return any(name.startswith(prefix) for prefix in CHRONOS_FAMILY)
+    return bool(name) and any(name.startswith(prefix) for prefix in CHRONOS_FAMILY)
 
 
 def _load_chronos_pipeline(name: str):
@@ -199,27 +230,15 @@ class ChronosForecaster:
         if not _is_chronos_family(model_name):
             raise ForecastEngineError(f"not a chronos-family model: {model_name}")
         self.model_name = model_name
-        self._pipeline = None  # lazy
-
-    def _get_pipeline(self):
-        if self._pipeline is None:
-            self._pipeline = _load_chronos_pipeline(self.model_name)
-        return self._pipeline
 
     def predict(self, req: ForecastRequest) -> ForecastResult:
         import torch
 
         if len(req.series) < 16:
             raise InsufficientDataError(f"need at least 16 points, got {len(req.series)}")
-        if req.horizon < 1:
-            raise ForecastEngineError(f"horizon must be >= 1, got {req.horizon}")
-        if req.num_samples < 1:
-            raise ForecastEngineError(f"num_samples must be >= 1, got {req.num_samples}")
 
-        cleaned = _clean_series(req.series)
-        context = torch.tensor(cleaned, dtype=torch.float32)
-
-        pipe = self._get_pipeline()
+        context = torch.tensor(_clean_series(req.series), dtype=torch.float32)
+        pipe = _load_chronos_pipeline(self.model_name)
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         t0 = time.time()
@@ -243,35 +262,82 @@ class ChronosForecaster:
             arr = arr[0]
         if arr.ndim != 2:
             raise ForecastEngineError(f"unexpected chronos output shape: {arr.shape}")
-        # arr is now (num_samples, horizon)
 
-        median = np.median(arr, axis=0)
-        lower_2_5 = np.percentile(arr, 2.5, axis=0)
-        lower_10 = np.percentile(arr, 10, axis=0)
-        lower_25 = np.percentile(arr, 25, axis=0)
-        upper_75 = np.percentile(arr, 75, axis=0)
-        upper_90 = np.percentile(arr, 90, axis=0)
-        upper_97_5 = np.percentile(arr, 97.5, axis=0)
+        return _build_result(arr.T, req, self.model_name, device, elapsed_ms)
 
-        iterations = arr.T.tolist()  # (horizon, num_samples)
 
-        future_ts = _extend_timestamps(req.timestamps, req.horizon, req.seasonality)
-        return ForecastResult(
-            timestamps=future_ts,
-            historical_values=req.series,
-            iterations=iterations,
-            median=median.tolist(),
-            lower_25=lower_25.tolist(),
-            upper_75=upper_75.tolist(),
-            lower_10=lower_10.tolist(),
-            upper_90=upper_90.tolist(),
-            lower_2_5=lower_2_5.tolist(),
-            upper_97_5=upper_97_5.tolist(),
-            model_used=self.model_name,
-            device=device,
-            inference_ms=elapsed_ms,
-            seasonality=req.seasonality,
-        )
+# ---------------------------------------------------------------------------
+# Fine-tuned LSTM engine
+# ---------------------------------------------------------------------------
+
+def build_lstm(hidden_size: int = LSTM_HIDDEN, num_layers: int = LSTM_LAYERS):
+    """One-step-ahead LSTM shared by the Fine-Tune trainer and inference."""
+    import torch.nn as nn
+
+    class TimeSeriesModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lstm = nn.LSTM(1, hidden_size, num_layers=num_layers, batch_first=True, dropout=0.1)
+            self.fc = nn.Sequential(
+                nn.Linear(hidden_size, 32),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(32, 1),
+            )
+
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            return self.fc(out[:, -1, :]).squeeze(-1)
+
+    return TimeSeriesModel()
+
+
+class LSTMForecaster:
+    """Autoregressive roll-out of a fine-tuned LSTM.
+
+    Sample paths combine MC dropout (model uncertainty) with Gaussian noise
+    scaled to the model's one-step residuals on the input history.
+    """
+    name = "lstm-finetuned"
+
+    def __init__(self, model_name: str, model_dir: str):
+        self.model_name = model_name
+        self.model_path = os.path.join(model_dir, "model.pt")
+
+    def predict(self, req: ForecastRequest) -> ForecastResult:
+        import torch
+
+        if not os.path.exists(self.model_path):
+            raise ForecastEngineError(f"weights not found for '{self.model_name}' ({self.model_path})")
+        ckpt = torch.load(self.model_path, map_location="cpu", weights_only=True)
+        cfg = ckpt.get("config", {})
+        model = build_lstm(cfg.get("hidden_size", LSTM_HIDDEN), cfg.get("num_layers", LSTM_LAYERS))
+        model.load_state_dict(ckpt["model_state_dict"])
+
+        values = _clean_series(req.series).astype(np.float64)
+        mean, std = values.mean(), values.std() or 1.0
+        z = torch.tensor((values - mean) / std, dtype=torch.float32)
+        seq_len = max(2, min(cfg.get("seq_len", LSTM_DEFAULT_SEQ_LEN), z.numel() - 2))
+
+        t0 = time.time()
+        with torch.no_grad():
+            model.eval()
+            n_windows = min(200, z.numel() - seq_len)
+            windows = torch.stack([z[-seq_len - i - 1:-i - 1] for i in range(n_windows)]).unsqueeze(-1)
+            targets = torch.stack([z[-i - 1] for i in range(n_windows)])
+            sigma = float((model(windows) - targets).std()) if n_windows > 1 else 0.1
+
+            model.train()  # keep dropout on: MC dropout across sample paths
+            ctx = z[-seq_len:].repeat(req.num_samples, 1).unsqueeze(-1)
+            steps = []
+            for _ in range(req.horizon):
+                nxt = model(ctx) + torch.randn(req.num_samples) * sigma
+                steps.append(nxt)
+                ctx = torch.cat([ctx[:, 1:], nxt.view(-1, 1, 1)], dim=1)
+        elapsed_ms = int((time.time() - t0) * 1000)
+
+        paths = torch.stack(steps).numpy().astype(np.float64) * std + mean  # (horizon, samples)
+        return _build_result(paths, req, self.model_name, "cpu", elapsed_ms)
 
 
 # ---------------------------------------------------------------------------
@@ -287,64 +353,31 @@ class StatisticalFallbackForecaster:
     def predict(self, req: ForecastRequest) -> ForecastResult:
         if len(req.series) < 8:
             raise InsufficientDataError(f"need at least 8 points, got {len(req.series)}")
-        cleaned = _clean_series(req.series)
+        cleaned = _clean_series(req.series).astype(np.float64)
         n = cleaned.size
-        period = 1
-        if req.seasonality and req.seasonality.get("period", 0) > 1:
-            period = int(req.seasonality["period"])
-        period = min(period, max(1, n // 2))
+        period = int((req.seasonality or {}).get("period", 1) or 1)
+        period = max(1, min(period, n // 2))
 
-        # base: seasonal naive with linear trend
-        recent = cleaned[-min(100, n):]
-        slope, intercept = np.polyfit(np.arange(recent.size), recent, 1)
+        # linear trend over a recent window covering at least two seasons
+        recent = cleaned[-min(n, max(100, 2 * period)):]
+        x = np.arange(recent.size)
+        slope, intercept = np.polyfit(x, recent, 1)
+        resid = recent - (intercept + slope * x)
 
-        # initial level
-        if period > 1 and n >= period:
-            last_seasonal = cleaned[-period:]
-            level = float(cleaned[-1] - last_seasonal[-1])
-        else:
-            level = float(np.mean(recent))
-            last_seasonal = np.zeros(period) if period > 1 else np.zeros(1)
+        h = np.arange(1, req.horizon + 1)
+        base = intercept + slope * (recent.size - 1 + h)
+        if period > 1:
+            season = resid[-period:]
+            base = base + season[(h - 1) % period]
 
-        # noise scale from residuals
+        # noise grows with sqrt(h), scaled from the one-step volatility
         diffs = np.diff(cleaned)
         noise = float(np.std(diffs)) if diffs.size > 1 else float(np.std(recent)) * 0.05
+        sigma = noise * np.sqrt(h) * 0.5
 
         rng = np.random.default_rng(seed=42)
-        iterations = np.zeros((req.horizon, req.num_samples), dtype=np.float32)
-        for h in range(1, req.horizon + 1):
-            base = intercept + slope * (n + h)
-            if period > 1:
-                base += last_seasonal[(h - 1) % period] - last_seasonal[0]
-            sigma = noise * np.sqrt(h) * 0.5
-            for s in range(req.num_samples):
-                iterations[h - 1, s] = base + rng.normal(0, sigma)
-
-        median = np.median(iterations, axis=1)
-        lower_2_5 = np.percentile(iterations, 2.5, axis=1)
-        lower_10 = np.percentile(iterations, 10, axis=1)
-        lower_25 = np.percentile(iterations, 25, axis=1)
-        upper_75 = np.percentile(iterations, 75, axis=1)
-        upper_90 = np.percentile(iterations, 90, axis=1)
-        upper_97_5 = np.percentile(iterations, 97.5, axis=1)
-
-        future_ts = _extend_timestamps(req.timestamps, req.horizon, req.seasonality)
-        return ForecastResult(
-            timestamps=future_ts,
-            historical_values=req.series,
-            iterations=iterations.tolist(),
-            median=median.tolist(),
-            lower_25=lower_25.tolist(),
-            upper_75=upper_75.tolist(),
-            lower_10=lower_10.tolist(),
-            upper_90=upper_90.tolist(),
-            lower_2_5=lower_2_5.tolist(),
-            upper_97_5=upper_97_5.tolist(),
-            model_used=self.model_name,
-            device="cpu",
-            inference_ms=0,
-            seasonality=req.seasonality,
-        )
+        paths = base[:, None] + rng.normal(0.0, 1.0, (req.horizon, req.num_samples)) * sigma[:, None]
+        return _build_result(paths, req, self.model_name, "cpu", 0)
 
 
 # ---------------------------------------------------------------------------
@@ -354,29 +387,27 @@ class StatisticalFallbackForecaster:
 def _extend_timestamps(timestamps: list[str], horizon: int, seasonality: Optional[dict]) -> list[str]:
     """Generate `horizon` future timestamps after the last input timestamp.
 
-    Uses the detected median step. If we can't parse, returns synthetic keys.
+    Uses the detected median step and keeps the input's format (date-only vs
+    datetime, naive vs tz-aware). If we can't parse, returns synthetic keys.
     """
+    synthetic = [f"t+{i+1}" for i in range(horizon)]
     if not timestamps or horizon <= 0:
-        return [f"t+{i+1}" for i in range(horizon)]
-    last = timestamps[-1]
-    last_ts = _parse_ts(last)
-    if last_ts is None:
-        return [f"t+{i+1}" for i in range(horizon)]
+        return synthetic
+    last = _parse_dt(timestamps[-1])
+    if last is None:
+        return synthetic
     step = (seasonality or {}).get("median_step_seconds", 0.0) or 0.0
-    if step <= 0:
-        # try to infer from the last two timestamps
-        if len(timestamps) >= 2:
-            prev = _parse_ts(timestamps[-2])
-            if prev is not None:
-                step = max(1.0, last_ts - prev)
+    if step <= 0 and len(timestamps) >= 2:
+        prev = _parse_dt(timestamps[-2])
+        if prev is not None:
+            step = (last - prev).total_seconds()
     if step <= 0:
         step = 3600.0  # default 1h
-    from datetime import datetime, timezone
-    base = datetime.fromtimestamp(last_ts, tz=timezone.utc)
-    out: list[str] = []
+    date_only = len(timestamps[-1]) == 10
+    out = []
     for i in range(1, horizon + 1):
-        ts = base.timestamp() + step * i
-        out.append(datetime.fromtimestamp(ts, tz=timezone.utc).isoformat())
+        ts = last + timedelta(seconds=step * i)
+        out.append(ts.date().isoformat() if date_only else ts.isoformat(sep=" "))
     return out
 
 
@@ -384,26 +415,23 @@ def _extend_timestamps(timestamps: list[str], horizon: int, seasonality: Optiona
 # Factory
 # ---------------------------------------------------------------------------
 
-def get_forecaster(model_name: str) -> Forecaster:
+def get_forecaster(model_name: str, model_dir: Optional[str] = None) -> Forecaster:
     """Return the right engine for a model name.
 
     Accepts:
-      - chronos family names (amazon/chronos-*, amazon/chronos-bolt-*, google/timesfm-*)
-      - the canonical statistical-fallback label
-      - any name registered in the model registry (returns the label, but
-        inference is delegated to the fallback until custom inference is wired)
+      - chronos T5 names (amazon/chronos-t5-*)
+      - the statistical-fallback labels
+      - a fine-tuned model, when `model_dir` points at its saved weights
     """
     if not model_name:
         raise ForecastEngineError("model_name is required")
     if _is_chronos_family(model_name):
         return ChronosForecaster(model_name=model_name)
-    if model_name in {"statistical-fallback", "fallback", "naive", "seasonal-naive"}:
+    if model_name in FALLBACK_NAMES:
         return StatisticalFallbackForecaster(label=model_name)
-    # Custom registered models: inference is not yet wired. The router will
-    # check the registry before calling this, so reaching here means the
-    # caller did not validate. Fall back gracefully but log it.
-    logger.warning("model_name %r is not in chronos family and not statistical; using statistical fallback", model_name)
-    return StatisticalFallbackForecaster(label=model_name)
+    if model_dir:
+        return LSTMForecaster(model_name, model_dir)
+    raise ForecastEngineError(f"unknown model '{model_name}'")
 
 
 def warmup_default_models(default: str = "amazon/chronos-t5-small") -> threading.Thread:

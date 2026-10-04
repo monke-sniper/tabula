@@ -14,6 +14,26 @@ export class ApiError extends Error {
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || 'http://127.0.0.1:8420'
 export const API_BASE = BASE
 
+/** Human-readable message for anything thrown by fetch / the API helpers. */
+export function errorMessage(err: unknown, fallback = 'Request failed'): string {
+  if (err instanceof ApiError) return err.detail
+  if (err instanceof Error) return err.message
+  return fallback
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  let detail = res.statusText
+  let code = 'API_ERROR'
+  try {
+    const body = await res.json()
+    // FastAPI validation errors (422) arrive as a list of { loc, msg }
+    if (Array.isArray(body?.detail)) detail = body.detail.map((d: { msg?: string }) => d.msg ?? String(d)).join('; ')
+    else if (body?.detail) detail = String(body.detail)
+    if (body?.code) code = String(body.code)
+  } catch {}
+  return new ApiError(res.status, detail, code)
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
@@ -22,16 +42,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers || {}),
     },
   })
-  if (!res.ok) {
-    let detail = res.statusText
-    let code = 'API_ERROR'
-    try {
-      const body = await res.json()
-      if (body?.detail) detail = String(body.detail)
-      if (body?.code) code = String(body.code)
-    } catch {}
-    throw new ApiError(res.status, detail, code)
-  }
+  if (!res.ok) throw await toApiError(res)
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) return (await res.json()) as T
   return (await res.text()) as unknown as T
@@ -61,13 +72,6 @@ export async function apiUpload<T>(path: string, file: File, signal?: AbortSigna
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${BASE}${path}`, { method: 'POST', body: form, signal })
-  if (!res.ok) {
-    let detail = res.statusText
-    try {
-      const body = await res.json()
-      if (body?.detail) detail = String(body.detail)
-    } catch {}
-    throw new ApiError(res.status, detail)
-  }
+  if (!res.ok) throw await toApiError(res)
   return (await res.json()) as T
 }

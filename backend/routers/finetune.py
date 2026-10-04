@@ -10,7 +10,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from routers.data import get_session, pick_target
+from services import forecaster as fc
 
 router = APIRouter()
 
@@ -38,14 +41,15 @@ _training_lock = threading.Lock()
 
 class FineTuneRequest(BaseModel):
     session_id: str
-    model_name: str
+    model_name: str = "lstm"
     custom_name: str
-    learning_rate: float = 1e-4
-    num_epochs: int = 3
-    batch_size: int = 8
-    warmup_steps: int = 100
-    weight_decay: float = 0.01
-    train_split: float = 0.8
+    target_column: Optional[str] = None
+    learning_rate: float = Field(1e-3, gt=0, le=1)
+    num_epochs: int = Field(10, ge=1, le=500)
+    batch_size: int = Field(16, ge=1, le=1024)
+    warmup_steps: int = Field(20, ge=0)
+    weight_decay: float = Field(0.01, ge=0)
+    train_split: float = Field(0.8, ge=0.5, le=0.95)
     val_split: float = 0.1
 
 
@@ -56,13 +60,6 @@ class ModelListResponse(BaseModel):
 
 class SetActiveRequest(BaseModel):
     model: str
-
-
-def _get_df(session_id: str) -> pd.DataFrame:
-    from routers.data import sessions
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found. Upload data first.")
-    return sessions[session_id]
 
 
 def _load_model_registry() -> dict:
@@ -86,17 +83,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
         training_status['status'] = 'training'
         training_status['message'] = 'Preparing data...'
 
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        # skip id-like columns
-        numeric_cols = [c for c in numeric_cols if not _is_id_like(c)]
-        if not numeric_cols:
-            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if not numeric_cols:
-            training_status['status'] = 'error'
-            training_status['message'] = 'No numeric columns found'
-            return
-
-        target_col = numeric_cols[0]
+        target_col = config['target_column']
         values = df[target_col].dropna().values.astype(np.float32)
 
         if len(values) < 50:
@@ -134,22 +121,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             training_status['device'] = str(device)
 
-            class TimeSeriesModel(nn.Module):
-                def __init__(self, input_size):
-                    super().__init__()
-                    self.lstm = nn.LSTM(input_size, 64, num_layers=2, batch_first=True, dropout=0.1)
-                    self.fc = nn.Sequential(
-                        nn.Linear(64, 32),
-                        nn.ReLU(),
-                        nn.Dropout(0.1),
-                        nn.Linear(32, 1),
-                    )
-
-                def forward(self, x):
-                    out, _ = self.lstm(x)
-                    return self.fc(out[:, -1, :]).squeeze(-1)
-
-            model = TimeSeriesModel(1).to(device)
+            model = fc.build_lstm(fc.LSTM_HIDDEN, fc.LSTM_LAYERS).to(device)
             optimizer = torch.optim.AdamW(
                 model.parameters(),
                 lr=config['learning_rate'],
@@ -218,8 +190,9 @@ def _train_worker(config: dict, df: pd.DataFrame):
                 'model_state_dict': model.state_dict(),
                 'config': {
                     'input_size': 1,
-                    'hidden_size': 64,
-                    'num_layers': 2,
+                    'hidden_size': fc.LSTM_HIDDEN,
+                    'num_layers': fc.LSTM_LAYERS,
+                    'seq_len': seq_len,
                 },
                 'training_config': config,
                 'norm_stats': {'mean': float(mean_val), 'std': float(std_val)},
@@ -235,6 +208,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
                 'path': model_path,
                 'created_at': pd.Timestamp.now().isoformat(),
                 'engine': 'lstm-finetuned',
+                'target_column': target_col,
                 'metrics': {
                     'loss': training_status['train_loss'],
                     'eval_loss': training_status['eval_loss'],
@@ -243,7 +217,7 @@ def _train_worker(config: dict, df: pd.DataFrame):
             _save_model_registry(registry)
 
             training_status['status'] = 'completed'
-            training_status['message'] = f'Model saved to {model_path}'
+            training_status['message'] = f"Saved '{config['custom_name']}' (target: {target_col})"
 
         except ImportError as e:
             training_status['status'] = 'error'
@@ -254,19 +228,11 @@ def _train_worker(config: dict, df: pd.DataFrame):
         training_status['message'] = f'Training failed: {str(e)}'
 
 
-def _is_id_like(name: str) -> bool:
-    n = name.lower()
-    return n in {"id", "idx", "index"} or n.endswith("_id") or n.startswith("id_")
-
-
 @router.post("/finetune/start")
 def start_finetune(req: FineTuneRequest):
     global training_thread
 
-    if training_status['status'] == 'training' or training_status['status'] == 'starting':
-        raise HTTPException(status_code=400, detail="Training already in progress")
-
-    df = _get_df(req.session_id)
+    df = get_session(req.session_id)
 
     name = (req.custom_name or "").strip()
     if not name:
@@ -283,18 +249,22 @@ def start_finetune(req: FineTuneRequest):
 
     config = req.model_dump()
     config['custom_name'] = name
+    config['target_column'] = pick_target(df, req.target_column)
 
-    training_status.update({
-        'status': 'starting',
-        'progress': 0,
-        'current_epoch': 0,
-        'total_epochs': req.num_epochs,
-        'train_loss': 0,
-        'eval_loss': 0,
-        'message': 'Initializing...',
-        'device': 'cpu',
-        'epoch_ms': 0,
-    })
+    with _training_lock:
+        if training_status['status'] in ('training', 'starting'):
+            raise HTTPException(status_code=400, detail="Training already in progress")
+        training_status.update({
+            'status': 'starting',
+            'progress': 0,
+            'current_epoch': 0,
+            'total_epochs': req.num_epochs,
+            'train_loss': 0,
+            'eval_loss': 0,
+            'message': 'Initializing...',
+            'device': 'cpu',
+            'epoch_ms': 0,
+        })
 
     training_thread = threading.Thread(target=_train_worker, args=(config, df), daemon=True)
     training_thread.start()

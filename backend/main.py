@@ -39,10 +39,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Tabula Backend", version="1.1.0", lifespan=lifespan)
 
+# Local-only: /upload-path reads files from disk, so arbitrary websites must
+# not be able to call this API from the user's browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
