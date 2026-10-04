@@ -1,401 +1,174 @@
 import { useMemo } from 'react'
 import Plot from 'react-plotly.js'
 import type { ForecastResponse, ForecastResult } from '../lib/types'
-import { useApp } from '../lib/context'
+import { C, PLOT_STYLE, plotLayout } from '../lib/chartTheme'
 
-interface FanChartProps {
-  data: ForecastResponse
+export type ViewMode = 'fan' | 'bands' | 'lines'
+
+const FAN_LEVELS = 6
+const MAX_TICKS = 10
+const CONFIG: Partial<Plotly.Config> = { displayModeBar: false, scrollZoom: true }
+
+/** "2024-01-03 05:00:00" -> "01-03 05:00"; midnight / date-only -> "2024-01-03". */
+function shortTs(ts: string): string {
+  const m = ts.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}))?/)
+  if (!m) return ts
+  const [, y, mo, d, hm] = m
+  return hm && hm !== '00:00' ? `${mo}-${d} ${hm}` : `${y}-${mo}-${d}`
 }
 
-/** Build the shared layout + x-axis scaffolding once per result set. */
-function useChartSkeleton(data: ForecastResponse) {
-  const allTimestamps = useMemo(() => data.results.map((r) => r.timestamp), [data])
-  const tsToIdx = useMemo(() => {
-    const m = new Map<string, number>()
-    allTimestamps.forEach((t, i) => m.set(t, i))
-    return m
-  }, [allTimestamps])
-
-  // Memoize the returned object so dependents get a stable reference until
-  // the underlying data actually changes. Without this, tickVals / tickTexts
-  // are fresh arrays on every render, and `<Plot layout={...}>` sees a new
-  // layout object and resets the zoom on every parent re-render (e.g. the
-  // 10s health poll).
-  return useMemo(() => {
-    const tickStep = Math.max(1, Math.floor(allTimestamps.length / 12))
-    const tickVals = allTimestamps.map((_, i) => i).filter((_, i) => i % tickStep === 0)
-    const tickTexts = tickVals.map((i) => shortenTs(allTimestamps[i]))
-    return { allTimestamps, tsToIdx, tickVals, tickTexts }
-  }, [allTimestamps, tsToIdx])
+/**
+ * Split results into history / forecast on a shared integer x axis. The
+ * anchor row reuses the last historical x so the fan starts on the last actual.
+ */
+function splitSeries(data: ForecastResponse) {
+  const labels: string[] = []
+  const hist = { x: [] as number[], y: [] as number[] }
+  const fc = { x: [] as number[], rows: [] as ForecastResult[] }
+  for (const r of data.results) {
+    if (r.is_anchor) {
+      fc.x.push(labels.length - 1)
+      fc.rows.push(r)
+      continue
+    }
+    if (r.is_forecast) {
+      fc.x.push(labels.length)
+      fc.rows.push(r)
+    } else {
+      hist.x.push(labels.length)
+      hist.y.push(r.actual ?? NaN)
+    }
+    labels.push(r.timestamp)
+  }
+  return { labels, hist, fc }
 }
 
-function shortenTs(ts: string): string {
-  if (!ts) return ''
-  const tMatch = ts.match(/T(\d{2}:\d{2})/)
-  if (tMatch) return tMatch[1]
-  return ts.slice(0, 10)
-}
-
-function historicalSeries(data: ForecastResponse, tsToIdx: Map<string, number>) {
-  const hist = data.results.filter((r) => !r.is_forecast)
-  const x = hist.map((r) => tsToIdx.get(r.timestamp) ?? 0)
-  const y = hist.map((r) => r.actual ?? 0)
-  return { hist, x, y }
-}
-
-function forecastSeries(data: ForecastResponse, tsToIdx: Map<string, number>) {
-  const f = data.results.filter((r) => r.is_forecast)
-  const x = f.map((r) => tsToIdx.get(r.timestamp) ?? 0)
-  return { forecast: f, x }
-}
-
-function baseLayout(skeleton: ReturnType<typeof useChartSkeleton>, showVolume: boolean) {
-  return {
-    height: undefined,
-    margin: { t: 5, b: 30, l: 45, r: 45 },
-    paper_bgcolor: 'transparent',
-    plot_bgcolor: 'transparent',
-    font: { color: '#666666', size: 9, family: 'IBM Plex Mono' },
-    xaxis: {
-      tickmode: 'array',
-      tickvals: skeleton.tickVals,
-      ticktext: skeleton.tickTexts,
-      gridcolor: '#1a1a1a',
-      gridwidth: 1,
-      tickangle: 0,
-      tickfont: { size: 8 },
-      linecolor: '#222222',
-      rangeslider: { visible: false },
-    },
-    yaxis: {
-      title: { text: 'VALUE', font: { size: 8, color: '#666' } },
-      gridcolor: '#1a1a1a',
-      gridwidth: 1,
-      tickfont: { size: 8 },
-      linecolor: '#222222',
-      side: 'right',
-      domain: showVolume ? [0.2, 1] : [0, 1],
-    },
-    yaxis2: {
-      gridcolor: 'transparent',
-      tickfont: { size: 7 },
-      linecolor: '#222222',
-      side: 'right',
-      domain: [0, 0.18],
-      showgrid: false,
-    },
-    legend: {
-      orientation: 'h',
-      y: 1.04,
-      x: 0.5,
-      xanchor: 'center',
-      font: { size: 8, color: '#666', family: 'IBM Plex Mono' },
-      bgcolor: 'transparent',
-    },
-    hovermode: 'x unified',
-    hoverlabel: {
-      bgcolor: '#111111',
-      bordercolor: '#333333',
-      font: { family: 'IBM Plex Mono', size: 9, color: '#e0e0e0' },
-    },
-  } as Partial<Plotly.Layout>
-}
-
-function volumeTraces(y: number[]): Plotly.Data[] {
-  if (y.length < 2) return []
-  const dy = y.map((v, i) => {
-    if (i === 0) return Math.abs(v) * 0.3
-    return Math.abs(v - y[i - 1]) + Math.abs(v) * 0.05
-  })
-  const color = y.map((v, i) => (i === 0 ? 'rgba(0,200,83,0.3)' : v >= y[i - 1] ? 'rgba(0,200,83,0.3)' : 'rgba(255,23,68,0.3)'))
-  return [
-    {
-      x: y.map((_, i) => i),
-      y: dy,
-      type: 'bar',
-      marker: { color },
-      yaxis: 'y2',
-      showlegend: false,
-      hoverinfo: 'skip',
-    } as Plotly.Data,
-  ]
-}
-
-function actualLine(x: number[], y: number[]): Plotly.Data[] {
-  if (!x.length) return []
-  return [
-    {
-      x,
-      y,
-      type: 'scatter',
-      mode: 'lines',
-      name: 'Actual',
-      line: { color: '#00bcd4', width: 1.5 },
-      hovertemplate: '%{text}<br>Value: %{y:.2f}<extra></extra>',
-      text: y.map(() => 'historical'),
-    } as Plotly.Data,
-  ]
-}
-
-function ciBand(x: number[], upper: number[], lower: number[], name: string, fill: string, line: string): Plotly.Data {
+function band(x: number[], rows: ForecastResult[], hi: keyof ForecastResult, lo: keyof ForecastResult, name: string, alpha: number): Plotly.Data {
   return {
     x: [...x, ...[...x].reverse()],
-    y: [...upper, ...[...lower].reverse()],
+    y: [...rows.map((r) => r[hi] as number), ...rows.map((r) => r[lo] as number).reverse()],
     type: 'scatter',
     fill: 'toself',
-    fillcolor: fill,
-    line: { color: line, width: 1 },
+    fillcolor: `rgba(0,188,212,${alpha})`,
+    line: { color: `rgba(0,188,212,${Math.min(1, alpha * 3)})`, width: 0.8 },
     name,
     hoverinfo: 'skip',
-  } as Plotly.Data
+  }
 }
 
-function ciBands(forecast: ForecastResult[], x: number[]): Plotly.Data[] {
-  if (!forecast.length) return []
-  return [
-    ciBand(
-      x,
-      forecast.map((r) => r.upper_97_5),
-      forecast.map((r) => r.lower_2_5),
-      '95% CI',
-      'rgba(0, 188, 212, 0.05)',
-      'rgba(0, 188, 212, 0.18)',
-    ),
-    ciBand(
-      x,
-      forecast.map((r) => r.upper_90),
-      forecast.map((r) => r.lower_10),
-      '80% CI',
-      'rgba(0, 188, 212, 0.10)',
-      'rgba(0, 188, 212, 0.32)',
-    ),
-    ciBand(
-      x,
-      forecast.map((r) => r.upper_75),
-      forecast.map((r) => r.lower_25),
-      '50% CI',
-      'rgba(0, 188, 212, 0.18)',
-      'rgba(0, 188, 212, 0.55)',
-    ),
-  ]
-}
-
-function iterationFan(forecast: ForecastResult[], x: number[]): Plotly.Data[] {
-  if (!forecast.length) return []
-  const numIter = forecast[0]?.iteration_values.length ?? 0
-  if (numIter === 0) return []
-
-  // score each iteration by mean absolute distance from the median
-  const scores: number[] = []
-  for (let i = 0; i < numIter; i++) {
-    let s = 0
-    for (const f of forecast) s += Math.abs(f.iteration_values[i] - f.median)
-    scores.push(s / forecast.length)
-  }
-  // gaussian-ish opacity weighting: best iterations fully opaque, worst very faint
-  const maxScore = Math.max(scores[scores.length - 1] || 1, 1e-6)
-
-  // cap visible iterations to keep the plot responsive
-  const maxLines = 200
-  let visibleIdxs: number[]
-  if (numIter <= maxLines) {
-    visibleIdxs = scores.map((_, i) => i)
-  } else {
-    // deterministic downsample: pick the `maxLines` lowest-scoring (closest to median)
-    const sorted = scores.map((s, i) => ({ s, i })).sort((a, b) => a.s - b.s)
-    visibleIdxs = sorted.slice(0, maxLines).map((x) => x.i)
-  }
-
-  const out: Plotly.Data[] = []
-  // render worst-of-visible FIRST so best-of-visible (full opacity) sits on top
-  visibleIdxs.sort((a, b) => scores[b] - scores[a])
-  for (const idx of visibleIdxs) {
-    const score = scores[idx]
-    const opacity = 0.05 + 0.85 * (1 - score / maxScore)
-    out.push({
-      x,
-      y: forecast.map((r) => r.iteration_values[idx]),
+/**
+ * Sample paths, faded by mean distance from the median. Paths are bucketed
+ * into a few opacity levels so Plotly draws ~6 traces instead of hundreds.
+ */
+function iterationFan(rows: ForecastResult[], x: number[]): Plotly.Data[] {
+  const paths = rows.filter((r) => !r.is_anchor)
+  const n = paths[0]?.iteration_values.length ?? 0
+  if (n < 2) return []
+  const scores = Array.from({ length: n }, (_, i) =>
+    paths.reduce((s, r) => s + Math.abs(r.iteration_values[i] - r.median), 0) / paths.length,
+  )
+  const maxScore = Math.max(...scores) || 1
+  const buckets = Array.from({ length: FAN_LEVELS }, () => ({ x: [] as (number | null)[], y: [] as (number | null)[] }))
+  scores.forEach((s, i) => {
+    const level = Math.min(FAN_LEVELS - 1, Math.floor((1 - s / maxScore) * FAN_LEVELS))
+    buckets[level].x.push(...x, null)
+    buckets[level].y.push(...rows.map((r) => (r.is_anchor ? r.median : r.iteration_values[i])), null)
+  })
+  // faint (far from median) first, so the closest paths sit on top
+  return buckets
+    .map((b, level): Plotly.Data | null => b.x.length ? {
+      x: b.x,
+      y: b.y,
       type: 'scatter',
       mode: 'lines',
-      line: { color: `rgba(255, 136, 0, ${opacity.toFixed(3)})`, width: 0.7 },
+      line: { color: `rgba(255,136,0,${(0.05 + 0.6 * (level + 1) / FAN_LEVELS).toFixed(2)})`, width: 0.7 },
+      connectgaps: false,
       showlegend: false,
       hoverinfo: 'skip',
-    } as Plotly.Data)
-  }
-  return out
+    } : null)
+    .filter((t): t is Plotly.Data => t !== null)
 }
 
-function medianLine(forecast: ForecastResult[], x: number[]): Plotly.Data {
-  return {
-    x,
-    y: forecast.map((r) => r.median),
-    type: 'scatter',
-    mode: 'lines',
-    name: 'Median',
-    line: { color: '#ff8800', width: 2 },
-    hovertemplate: '%{text}<br>Median: %{y:.2f}<extra></extra>',
-    text: forecast.map((r) => r.timestamp),
-  } as Plotly.Data
-}
+/** Forecast chart: FAN = sample paths + bands, BANDS = 50/80/95% regions, LINES = median only. */
+export function ForecastPlot({ data, view }: { data: ForecastResponse; view: ViewMode }) {
+  const { labels, hist, fc } = useMemo(() => splitSeries(data), [data])
 
-function actualMarkers(forecast: ForecastResult[], tsToIdx: Map<string, number>): Plotly.Data | null {
-  const withActual = forecast.filter((r) => r.actual !== null)
-  if (!withActual.length) return null
-  return {
-    x: withActual.map((r) => tsToIdx.get(r.timestamp) ?? 0),
-    y: withActual.map((r) => r.actual),
-    type: 'scatter',
-    mode: 'markers',
-    name: 'Holdout',
-    marker: { color: '#00bcd4', size: 5, symbol: 'diamond', line: { color: '#000', width: 1 } },
-    hovertemplate: '%{text}<br>Actual: %{y:.2f}<extra></extra>',
-    text: withActual.map((r) => r.timestamp),
-  } as Plotly.Data
-}
-
-function originRule(forecast: ForecastResult[], tsToIdx: Map<string, number>): Partial<Plotly.Shape> | null {
-  if (!forecast.length) return null
-  const idx = tsToIdx.get(forecast[0].timestamp) ?? 0
-  return {
-    type: 'line',
-    x0: idx,
-    x1: idx,
-    y0: 0,
-    y1: 1,
-    yref: 'paper',
-    line: { color: 'rgba(255,136,0,0.25)', width: 1, dash: 'dot' },
-  }
-}
-
-/** Full fan chart: iterations + 50/80/95% bands + volume. Default view. */
-export function FanChart({ data }: FanChartProps) {
-  const skeleton = useChartSkeleton(data)
-  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
-  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
   const traces = useMemo<Plotly.Data[]>(() => {
-    const t: Plotly.Data[] = [
-      ...volumeTraces(histY),
-      ...ciBands(forecast, fcX),
-      ...iterationFan(forecast, fcX),
-      ...actualLine(histX, histY),
-      medianLine(forecast, fcX),
-    ]
-    const marker = actualMarkers(forecast, skeleton.tsToIdx)
-    if (marker) t.push(marker)
-    return t
-  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
+    const holdout = fc.rows.map((r, i) => ({ r, x: fc.x[i] })).filter(({ r }) => r.actual !== null && !r.is_anchor)
+    return [
+      ...(view !== 'lines' && fc.rows.length ? [
+        band(fc.x, fc.rows, 'upper_97_5', 'lower_2_5', '95%', 0.06),
+        band(fc.x, fc.rows, 'upper_90', 'lower_10', '80%', 0.1),
+        band(fc.x, fc.rows, 'upper_75', 'lower_25', '50%', 0.16),
+      ] : []),
+      ...(view === 'fan' ? iterationFan(fc.rows, fc.x) : []),
+      {
+        x: hist.x, y: hist.y, type: 'scatter', mode: 'lines', name: 'Actual',
+        line: { color: C.cyan, width: 1.4 },
+        text: labels.slice(0, hist.x.length),
+        hovertemplate: '%{text}<br>Actual %{y:.2f}<extra></extra>',
+      },
+      {
+        x: fc.x, y: fc.rows.map((r) => r.median), type: 'scatter', mode: 'lines', name: 'Median',
+        line: { color: C.amber, width: 2 },
+        text: fc.rows.map((r) => r.timestamp),
+        hovertemplate: '%{text}<br>Median %{y:.2f}<extra></extra>',
+      },
+      {
+        x: holdout.map((h) => h.x), y: holdout.map((h) => h.r.actual), type: 'scatter', mode: 'markers', name: 'Holdout',
+        marker: { color: C.cyan, size: 5, symbol: 'diamond', line: { color: '#000', width: 1 } },
+        text: holdout.map((h) => h.r.timestamp),
+        hovertemplate: '%{text}<br>Holdout %{y:.2f}<extra></extra>',
+      },
+    ] as Plotly.Data[]
+  }, [view, labels, hist, fc])
 
   const layout = useMemo<Partial<Plotly.Layout>>(() => {
-    const rule = originRule(forecast, skeleton.tsToIdx)
-    return {
-      ...baseLayout(skeleton, histY.length >= 2),
-      shapes: rule ? [rule] : [],
-    }
-  }, [skeleton, histY.length, forecast, skeleton.tsToIdx])
+    const step = Math.max(1, Math.ceil(labels.length / MAX_TICKS))
+    const tickvals = labels.map((_, i) => i).filter((i) => i % step === 0)
+    const origin = fc.x[0]
+    return plotLayout({
+      margin: { t: 22, b: 28, l: 12, r: 52 },
+      xaxis: { tickmode: 'array', tickvals, ticktext: tickvals.map((i) => shortTs(labels[i])), tickangle: 0 },
+      yaxis: { side: 'right' },
+      legend: { orientation: 'h', y: 1.0, yanchor: 'bottom', x: 0, xanchor: 'left', font: { size: 9, color: C.text }, bgcolor: 'transparent' },
+      hovermode: 'x unified',
+      shapes: origin === undefined ? [] : [
+        { type: 'rect', x0: origin, x1: labels.length - 1, y0: 0, y1: 1, yref: 'paper', fillcolor: 'rgba(255,136,0,0.035)', line: { width: 0 }, layer: 'below' },
+        { type: 'line', x0: origin, x1: origin, y0: 0, y1: 1, yref: 'paper', line: { color: 'rgba(255,136,0,0.45)', width: 1, dash: 'dot' } },
+      ],
+      annotations: origin === undefined ? [] : [
+        { x: origin, y: 1, yref: 'paper', yanchor: 'bottom', xanchor: 'left', text: ' FORECAST', showarrow: false, font: { size: 9, color: C.amber } },
+      ],
+    })
+  }, [labels, fc])
 
-  // Stable references so the chart doesn't re-render on every parent update
-  // (e.g. the 10s health poll). Without this, Plotly resets the zoom.
-  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
-  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
-
-  return (
-    <Plot
-      data={traces}
-      layout={layout}
-      config={config}
-      style={style}
-      useResizeHandler
-    />
-  )
-}
-
-/** Bands-only view: 50/80/95% regions + median + actual. */
-export function BandsChart({ data }: FanChartProps) {
-  const skeleton = useChartSkeleton(data)
-  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
-  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
-  const traces = useMemo<Plotly.Data[]>(() => {
-    const t: Plotly.Data[] = [
-      ...ciBands(forecast, fcX),
-      ...actualLine(histX, histY),
-      medianLine(forecast, fcX),
-    ]
-    const marker = actualMarkers(forecast, skeleton.tsToIdx)
-    if (marker) t.push(marker)
-    return t
-  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
-  const layout = useMemo<Partial<Plotly.Layout>>(() => {
-    const rule = originRule(forecast, skeleton.tsToIdx)
-    return {
-      ...baseLayout(skeleton, false),
-      shapes: rule ? [rule] : [],
-    }
-  }, [skeleton, forecast, skeleton.tsToIdx])
-  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
-  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
-
-  return (
-    <Plot
-      data={traces}
-      layout={layout}
-      config={config}
-      style={style}
-      useResizeHandler
-    />
-  )
-}
-
-/** Lines-only view: actual + median + origin rule. Fastest. */
-export function LinesChart({ data }: FanChartProps) {
-  const skeleton = useChartSkeleton(data)
-  const { x: histX, y: histY } = useMemo(() => historicalSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
-  const { forecast, x: fcX } = useMemo(() => forecastSeries(data, skeleton.tsToIdx), [data, skeleton.tsToIdx])
-  const traces = useMemo<Plotly.Data[]>(() => {
-    const t: Plotly.Data[] = [
-      ...actualLine(histX, histY),
-      medianLine(forecast, fcX),
-    ]
-    const marker = actualMarkers(forecast, skeleton.tsToIdx)
-    if (marker) t.push(marker)
-    return t
-  }, [forecast, fcX, histX, histY, skeleton.tsToIdx])
-  const layout = useMemo<Partial<Plotly.Layout>>(() => {
-    const rule = originRule(forecast, skeleton.tsToIdx)
-    return {
-      ...baseLayout(skeleton, false),
-      shapes: rule ? [rule] : [],
-    }
-  }, [skeleton, forecast, skeleton.tsToIdx])
-  const config = useMemo(() => ({ displayModeBar: false, scrollZoom: true }), [])
-  const style = useMemo(() => ({ width: '100%', height: '100%' }), [])
-
-  return (
-    <Plot
-      data={traces}
-      layout={layout}
-      config={config}
-      style={style}
-      useResizeHandler
-    />
-  )
+  return <Plot data={traces} layout={layout} config={CONFIG} style={PLOT_STYLE} useResizeHandler />
 }
 
 /** Compact meta caption shown above the chart. */
 export function ForecastCaption({ data }: { data: ForecastResponse }) {
-  const { activeModel } = useApp()
   const season = data.seasonality
+  const items: Array<[string, string, string?]> = [
+    ['MODEL', data.model_used, 'var(--amber)'],
+    ...(data.target_column ? [['TARGET', data.target_column, 'var(--cyan)'] as [string, string, string]] : []),
+    ['DEVICE', data.device],
+    ['SAMPLES', String(data.iterations)],
+    ['HORIZON', String(data.prediction_length)],
+    ['INFER', `${data.inference_ms}ms`],
+    ...(season ? [['PERIOD', `${season.kind}/${season.period}`] as [string, string]] : []),
+    ['MAE', data.metrics.mae.toFixed(3)],
+    ['RMSE', data.metrics.rmse.toFixed(3)],
+    ['MAPE', `${data.metrics.mape.toFixed(2)}%`],
+  ]
   return (
-    <div className="font-mono text-[8px] text-[var(--grey)] px-2 py-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-[var(--border-dim)] bg-[var(--bg-secondary)]">
-      <span><span className="text-[var(--grey-dim)]">MODEL</span> <span className="text-[var(--amber)]">{data.model_used || activeModel}</span></span>
-      <span><span className="text-[var(--grey-dim)]">DEVICE</span> <span className="text-[var(--cyan)]">{data.device}</span></span>
-      <span><span className="text-[var(--grey-dim)]">SAMPLES</span> <span className="text-[var(--white)]">{data.iterations}</span></span>
-      <span><span className="text-[var(--grey-dim)]">INFER</span> <span className="text-[var(--white)]">{data.inference_ms}ms</span></span>
-      {season && (
-        <span><span className="text-[var(--grey-dim)]">PERIOD</span> <span className="text-[var(--white)]">{season.kind}/{season.period}</span></span>
-      )}
-      <span><span className="text-[var(--grey-dim)]">MAE</span> <span className="text-[var(--white)]">{data.metrics.mae.toFixed(3)}</span></span>
-      <span><span className="text-[var(--grey-dim)]">RMSE</span> <span className="text-[var(--white)]">{data.metrics.rmse.toFixed(3)}</span></span>
-      <span><span className="text-[var(--grey-dim)]">MAPE</span> <span className="text-[var(--white)]">{data.metrics.mape.toFixed(2)}%</span></span>
+    <div className="font-mono text-[10px] px-2 py-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-[var(--border-dim)] bg-[var(--bg-secondary)]">
+      {items.map(([k, v, color]) => (
+        <span key={k}>
+          <span className="text-[var(--grey)]">{k}</span>{' '}
+          <span className="tabular-nums" style={{ color: color ?? 'var(--white)' }}>{v}</span>
+        </span>
+      ))}
     </div>
   )
 }

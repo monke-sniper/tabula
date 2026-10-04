@@ -55,6 +55,8 @@ export interface ForecastResponse {
   model_used: string;
   device: string;
   inference_ms: number;
+  engine?: string;
+  target_column?: string;
   seasonality: ForecastSeasonality | null;
 }
 
@@ -64,6 +66,7 @@ export interface ModelInfo {
   path: string;
   created_at: string;
   engine?: string;
+  target_column?: string;
   metrics?: {
     loss?: number;
     eval_loss?: number;
@@ -84,6 +87,7 @@ export interface LossPoint {
 export interface FineTuneConfig {
   model_name: string;
   custom_name: string;
+  target_column: string;
   learning_rate: number;
   num_epochs: number;
   batch_size: number;
@@ -132,8 +136,7 @@ export interface SessionInfo {
 }
 
 export interface CleanRequest {
-  session_id: string;
-  strategy: 'drop' | 'mean' | 'zero' | 'ffill';
+  strategy: 'drop' | 'mean' | 'zero' | 'ffill' | 'clip';
   columns: string[];
 }
 
@@ -142,4 +145,5 @@ export interface CleanResponse {
   rows_before: number;
   rows_after: number;
   columns_modified: string[];
+  preview: Record<string, unknown>[];
 }

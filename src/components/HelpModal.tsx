@@ -38,17 +38,17 @@ const SECTIONS: Array<{ title: string; items: Array<{ label: string; text: strin
       },
       {
         label: 'OUT',
-        text: 'Count of values outside Q1 - 1.5·IQR to Q3 + 1.5·IQR (Tukey fences). FILL MEAN replaces outliers with the column mean; this is destructive — clean on a copy.',
+        text: 'Count of values outside Q1 - 1.5·IQR to Q3 + 1.5·IQR (Tukey fences). CAP clips those values to the fences; this is destructive.',
       },
     ],
   },
   {
     title: 'FORECAST ENGINE',
     items: [
-      { label: 'TGT', text: 'Which numeric column to forecast. AUTO picks the first non-id numeric column.' },
+      { label: 'TARGET', text: 'Which numeric column to forecast. AUTO picks the first non-id numeric column.' },
       {
         label: 'MODEL',
-        text: 'Which forecaster to use. amazon/chronos-* and google/timesfm-* are real ML foundation models (slow first run while weights download from Hugging Face). statistical-fallback is a fast seasonal-naive + linear-trend baseline.',
+        text: 'Which forecaster to use. amazon/chronos-t5-* are pretrained foundation models (slow first run while weights download from Hugging Face). Fine-tuned LSTMs from the Models page are listed too. statistical-fallback is a fast linear-trend + seasonal baseline.',
       },
       {
         label: 'SAMPLES',
@@ -60,14 +60,14 @@ const SECTIONS: Array<{ title: string; items: Array<{ label: string; text: strin
       },
       {
         label: 'VIEW',
-        text: 'FAN shows all iterations + 50/80/95% bands (default, matches references). BANDS shows confidence regions only. LINES shows just the median + actual. The fan chart is anchored at the last actual point with zero band width and widens outward.',
+        text: 'FAN shows sample paths (faded by distance from the median) + 50/80/95% bands. BANDS shows confidence regions only. LINES shows just the median + actual. The fan starts at the last actual point with zero width and widens outward.',
       },
     ],
   },
   {
     title: 'ADVANCED SAMPLING',
     items: [
-      { label: 'T (temperature)', text: 'Higher = more diverse forecast paths; lower = paths cluster tighter around the median. 1.0 is the default. Chronos bolt models honor this; t5 models use a related internal knob.' },
+      { label: 'TEMP', text: 'Sampling temperature. Higher = more diverse forecast paths; lower = paths cluster tighter around the median. 1.0 is the default. Chronos only.' },
       { label: 'TOP_P', text: 'Nucleus sampling cutoff. The model only samples tokens whose cumulative probability is in the top TOP_P. 0.9 = top 90% of the distribution. Lower = more conservative.' },
       { label: 'TOP_K', text: 'Top-K sampling. The model only considers the K most likely next tokens. 0 disables. Lower = tighter, higher = more diverse.' },
     ],
@@ -75,17 +75,17 @@ const SECTIONS: Array<{ title: string; items: Array<{ label: string; text: strin
   {
     title: 'MODELS',
     items: [
-      { label: 'USE', text: 'Loads the model into memory and sets it as the active forecaster. The first invocation on Chronos is slow (~10-20s on CPU while weights download and load); subsequent runs are sub-second.' },
-      { label: 'SELECT', text: 'Marks the model as active without reloading. Faster than USE if the model is already loaded.' },
-      { label: 'DEL', text: 'Removes the model from the registry and deletes its weights from disk. Cannot be undone. The active model cannot be deleted.' },
+      { label: 'USE', text: 'Sets the model as the active forecaster and jumps to the Dashboard.' },
+      { label: 'SELECT', text: 'Sets the model as the active forecaster and stays on this page.' },
+      { label: 'DEL', text: 'Removes the model from the registry and deletes its weights from disk. Cannot be undone. Deleting the active model resets it to amazon/chronos-t5-small.' },
     ],
   },
   {
     title: 'FINE-TUNE',
     items: [
-      { label: 'Base model', text: 'Which pretrained model to fine-tune. amazon/chronos-t5-small is fastest; amazon/chronos-bolt-small is the new architecture and trains faster.' },
-      { label: 'Custom name', text: '3-40 characters, lowercase letters, digits, underscores, hyphens. Becomes the registered model name after training.' },
-      { label: 'LR / Epochs / Batch', text: 'Standard SGD hyperparameters. Defaults: lr=1e-3, epochs=10, batch=32. Higher lr = faster but unstable; more epochs = better fit but risk overfitting.' },
+      { label: 'What it does', text: 'Trains a small 2-layer LSTM from scratch to predict the target one step ahead. Forecasts roll it forward; sample paths come from MC dropout plus residual noise.' },
+      { label: 'Model name', text: '3-40 characters, lowercase letters, digits, underscores, hyphens. Becomes the registered model name after training.' },
+      { label: 'LR / Epochs / Batch', text: 'AdamW hyperparameters. Defaults: lr=1e-3, epochs=10, batch=16. Higher lr = faster but unstable; more epochs = better fit but risk overfitting.' },
     ],
   },
   {
@@ -107,7 +107,7 @@ const SECTIONS: Array<{ title: string; items: Array<{ label: string; text: strin
       { label: 'POST /finetune/start', text: 'Start fine-tuning. Returns a job handle. Poll /finetune/status for progress.' },
       { label: 'GET /finetune/loss-history', text: 'Returns per-step training/eval loss for the latest fine-tune job.' },
       { label: 'GET /sessions, DELETE /sessions/{id}', text: 'List and delete in-memory + on-disk sessions.' },
-      { label: 'POST /sessions/{id}/clean', text: 'Apply a cleaning strategy (drop/mean/zero/ffill) to selected columns.' },
+      { label: 'POST /sessions/{id}/clean', text: 'Apply a cleaning strategy (drop/mean/zero/ffill/clip) to selected columns.' },
       { label: 'GET /models, DELETE /models/{name}', text: 'List and delete registered fine-tuned models.' },
     ],
   },
@@ -127,9 +127,9 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
 
   return (
     <div className="help-modal__overlay" onClick={onClose}>
-      <div className="help-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="help-modal" role="dialog" aria-modal="true" aria-label="Help" onClick={(e) => e.stopPropagation()}>
         <div className="help-modal__header">
-          <div className="font-mono text-[10px] text-[var(--cyan)] tracking-widest">TABULA · HELP</div>
+          <div className="font-mono text-[11px] text-[var(--cyan)] tracking-widest">TABULA · HELP</div>
           <button type="button" onClick={onClose} className="help-modal__close" aria-label="Close help">
             ×
           </button>
@@ -150,7 +150,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
           ))}
         </div>
         <div className="help-modal__footer">
-          <span className="font-mono text-[8px] text-[var(--grey-dim)]">Press Esc or click outside to close</span>
+          <span className="font-mono text-[10px] text-[var(--grey)]">Press Esc or click outside to close</span>
         </div>
       </div>
     </div>

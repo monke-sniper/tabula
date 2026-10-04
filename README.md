@@ -101,8 +101,8 @@ Click `LOAD SAMPLE` on the empty dashboard. It pulls in the bundled `test_data.c
 
 - **Frontend** — React 19, TypeScript 5, Vite 6, Tailwind, Plotly
 - **Backend** — FastAPI, pandas, pyarrow
-- **Models** — `chronos-forecasting` 2.2 (Amazon Chronos T5 + Bolt, Google TimesFM) via `ChronosPipeline`. Statistical fallback (seasonal-naive + linear trend) when no Chronos model is selected.
-- **Fine-tuning** — PyTorch LSTM head on a frozen pretrained base
+- **Models** — `chronos-forecasting` 2.2 (Amazon Chronos T5 tiny → large) via `ChronosPipeline`. Statistical fallback (linear trend + seasonal profile) for instant results.
+- **Fine-tuning** — small PyTorch LSTM trained on your data; usable as a forecaster (MC-dropout sample paths)
 - **Desktop** — Electron 33
 
 ## Endpoints
@@ -110,11 +110,10 @@ Click `LOAD SAMPLE` on the empty dashboard. It pulls in the bundled `test_data.c
 ```
 GET  /health                              liveness + loaded models
 POST /upload                              multipart CSV/Parquet/JSON/XLSX
-POST /upload-path                         upload by local path (used by Load Sample)
+POST /upload-path                         upload by local path, relative to repo root (Load Sample)
 GET  /eda/{session_id}                    column info, distributions, correlations, nulls, outliers
 POST /forecast/{session_id}               run forecast; body: model_name, horizon, num_samples
-POST /forecast/cancel                     cancel in-flight forecast
-POST /sessions/{id}/clean                 drop | mean | zero | ffill per column
+POST /sessions/{id}/clean                 drop | mean | zero | ffill | clip per column
 GET  /sessions                            list active sessions
 DEL  /sessions/{id}                       delete session
 POST /finetune/start                      start training
@@ -132,6 +131,7 @@ The forecast response includes a synthetic t=0 anchor row with `is_anchor: true`
 ```bash
 npm run typecheck        # tsc --noEmit
 npm run build            # vite build
+backend\.venv\Scripts\python -m pytest backend/tests   # needs requirements-dev.txt
 powershell scripts/e2e_test.ps1
 ```
 
